@@ -21,7 +21,7 @@ def main(cfg: DictConfig) -> None:
         min_audio_threshold=cfg.min_audio_threshold,
         max_seconds_silence=cfg.max_seconds_silence,
         min_seconds_audio=cfg.min_seconds_audio,
-        wake_word=cfg.wake_word,
+        wake_words=cfg.wake_words,
     )
     bot.run()
 

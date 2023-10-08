@@ -7,9 +7,12 @@ import logging
 
 
 load_dotenv()
-
-
 logger = logging.getLogger(__name__)
+
+
+SYSTEM_PROMPT = """
+Du hedder Robert og er en dansk stemmerobot. Du er sød, rar og hjælpsom.
+"""
 
 
 class TextEngine:
@@ -20,12 +23,14 @@ class TextEngine:
         temperature: Temperature to use for generation.
     """
 
-    def __init__(self, model_id: str, temperature: float, wake_word: str) -> None:
+    def __init__(
+        self, model_id: str, temperature: float, wake_words: list[str]
+    ) -> None:
         self.model_id = model_id
         self.temperature = temperature
-        self.wake_word = wake_word
+        self.wake_words = wake_words
         self.conversation: list[dict[str, str]] = [
-            dict(role="system", content="Du er en dansk stemmerobot, og er sød og rar.")
+            dict(role="system", content=SYSTEM_PROMPT.strip())
         ]
         openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -38,10 +43,8 @@ class TextEngine:
         Returns:
             Generated response, or None if prompt is empty.
         """
-        if self.wake_word not in prompt:
-            logger.info(
-                f"Prompt does not contain wake word ({self.wake_word!r}), skipping."
-            )
+        if all(word not in prompt for word in self.wake_words):
+            logger.info("Prompt does not contain any of the wake words, skipping.")
             return None
 
         self.conversation.append(dict(role="user", content=prompt))

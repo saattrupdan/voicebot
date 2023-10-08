@@ -4,7 +4,7 @@ from .speech_recording import record_speech
 from .speech_recognition import transcribe_speech
 from .speech_synthesis import apple_synthesis
 from .text_engine import TextEngine
-from transformers import AutoModelForCTC, AutoProcessor
+from transformers import pipeline
 import transformers.utils.logging as hf_logging
 import torch
 import logging
@@ -26,7 +26,7 @@ class VoiceBot:
         min_audio_threshold: float,
         max_seconds_silence: float,
         min_seconds_audio: float,
-        wake_word: str,
+        wake_words: list[str],
     ) -> None:
         self.text_model_id = text_model_id
         self.asr_model_id = asr_model_id
@@ -36,24 +36,23 @@ class VoiceBot:
         self.min_audio_threshold = min_audio_threshold
         self.max_seconds_silence = max_seconds_silence
         self.min_seconds_audio = min_seconds_audio
-        self.wake_word = wake_word
+        self.wake_words = wake_words
 
-        logger.info("Loading models...")
         hf_logging.set_verbosity_error()
-        self.asr_model = torch.compile(
-            model=AutoModelForCTC.from_pretrained(self.asr_model_id).eval(),
+        self.asr_pipeline = pipeline(
+            task="automatic-speech-recognition",
+            model=self.asr_model_id,
+            device=0 if torch.cuda.is_available() else -1,
         )
-        self.asr_processor = AutoProcessor.from_pretrained(self.asr_model_id)
         self.text_engine = TextEngine(
             model_id=self.text_model_id,
             temperature=self.temperature,
-            wake_word=self.wake_word,
+            wake_words=self.wake_words,
         )
 
     def run(self) -> None:
         """Run the bot."""
         while True:
-            logger.info("Ready. Note that the first transcription may be slow.")
             speech = record_speech(
                 sample_rate=self.sample_rate,
                 num_seconds_per_chunk=self.num_seconds_per_chunk,
@@ -61,11 +60,7 @@ class VoiceBot:
                 max_seconds_silence=self.max_seconds_silence,
                 min_seconds_audio=self.min_seconds_audio,
             )
-            text = transcribe_speech(
-                speech=speech,
-                asr_model=self.asr_model,
-                asr_processor=self.asr_processor,
-            )
+            text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             if text:
                 response = self.text_engine.generate_response(prompt=text)
                 apple_synthesis(text=response)
