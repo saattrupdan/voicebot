@@ -3,6 +3,7 @@
 import numpy as np
 import scipy.signal as sps
 from transformers import Pipeline
+import warnings
 
 
 def transcribe_speech(
@@ -22,4 +23,6 @@ def transcribe_speech(
     """
     num_samples = speech.shape[0] * 16_000 // sample_rate
     speech = sps.resample(x=speech, num=num_samples)
-    return asr_pipeline(inputs=speech)["text"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        return asr_pipeline(inputs=speech)["text"]

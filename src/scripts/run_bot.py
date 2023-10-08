@@ -12,7 +12,13 @@ def main(cfg: DictConfig) -> None:
     Args:
         cfg: Hydra configuration object.
     """
-    bot = VoiceBot(temperature=cfg.temperature)
+    bot = VoiceBot(
+        asr_model_id=cfg.asr_model_id,
+        sample_rate=cfg.sample_rate,
+        temperature=cfg.temperature,
+        num_seconds_per_chunk=cfg.num_seconds_per_chunk,
+        min_audio_threshold=cfg.min_audio_threshold,
+    )
     bot.run()
 
 

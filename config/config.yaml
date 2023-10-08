@@ -9,4 +9,8 @@ dirs:
   final: final
   models: models
 
+asr_model_id: chcaa/xls-r-300m-danish-nst-cv9
+sample_rate: 16_000
 temperature: 0.3
+num_seconds_per_chunk: 0.25
+min_audio_threshold: 0.05

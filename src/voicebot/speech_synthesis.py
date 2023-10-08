@@ -3,10 +3,11 @@
 import subprocess
 
 
-def apple_synthesis(text: str) -> None:
+def apple_synthesis(text: str | None) -> None:
     """Generate speech using Apple's built-in speech synthesis.
 
     Args:
-        text: Text to be spoken.
+        text: Text to be spoken, or None if nothing should be spoken.
     """
-    subprocess.call(["say", text])
+    if text is not None:
+        subprocess.call(["say", text])

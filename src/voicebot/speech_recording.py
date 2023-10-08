@@ -3,14 +3,23 @@
 import pyaudio
 import sys
 import numpy as np
+import logging
 
 
-def record_speech(sample_rate: int = 16_000, chunk_size: int = 4000) -> np.ndarray:
+logger = logging.getLogger(__name__)
+
+
+def record_speech(
+    sample_rate: int,
+    num_seconds_per_chunk: float,
+    min_audio_threshold: float,
+) -> np.ndarray:
     """Record speech and return it as text.
 
     Args:
         sample_rate: Sample rate.
-        chunk_size: Chunk size.
+        num_seconds_per_chunk: Number of seconds per chunk.
+        min_audio_threshold: Minimum amplitude for audio to be considered speech.
 
     Returns:
         Recorded speech.
@@ -23,24 +32,31 @@ def record_speech(sample_rate: int = 16_000, chunk_size: int = 4000) -> np.ndarr
         input=True,
     )
 
+    max_num_silent_frames = 1 // num_seconds_per_chunk
+    chunk_size = int(sample_rate * num_seconds_per_chunk)
+
     frames: list[np.ndarray] = list()
     num_silent_frames: int = 0
     has_begun_talking: bool = False
-    while num_silent_frames < 5:
+    while num_silent_frames < max_num_silent_frames:
         # Record a chunk of audio and append it to the list of frames
         chunk = stream.read(num_frames=chunk_size, exception_on_overflow=False)
         frame = np.frombuffer(buffer=chunk, dtype=np.float32)
-        frames.append(frame)
 
         # Stop the stream when the user stops talking
-        if frame.max() < 0.10 and has_begun_talking:
+        if frame.max() < min_audio_threshold and has_begun_talking:
             num_silent_frames += 1
-        elif frame.max() >= 0.10:
+            logger.info(f"Silence for {num_silent_frames} frames...")
+        elif frame.max() >= min_audio_threshold:
+            if not has_begun_talking:
+                logger.info("Audio detected!")
             has_begun_talking = True
             num_silent_frames = 0
+            frames.append(frame)
 
     stream.stop_stream()
     stream.close()
     audio.terminate()
 
+    breakpoint()
     return np.concatenate(frames, axis=0)

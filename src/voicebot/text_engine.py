@@ -18,15 +18,18 @@ class TextEngine:
         ]
         openai.api_key = os.getenv("OPENAI_API_KEY")
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str) -> str | None:
         """Generate a new response from a prompt.
 
         Args:
             prompt: Prompt to generate a response from.
 
         Returns:
-            Generated response.
+            Generated response, or None if prompt is empty.
         """
+        if prompt == "":
+            return None
+
         self.conversation.append(dict(role="user", content=prompt))
         llm_answer = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
