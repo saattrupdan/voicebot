@@ -8,6 +8,7 @@ from transformers import pipeline
 import transformers.utils.logging as hf_logging
 import torch
 import logging
+import datetime as dt
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class VoiceBot:
         max_seconds_silence: float,
         min_seconds_audio: float,
         max_seconds_audio: float,
+        follow_up_max_seconds: float,
         wake_words: list[str],
     ) -> None:
         self.text_model_id = text_model_id
@@ -38,6 +40,7 @@ class VoiceBot:
         self.max_seconds_silence = max_seconds_silence
         self.min_seconds_audio = min_seconds_audio
         self.max_seconds_audio = max_seconds_audio
+        self.follow_up_max_seconds = follow_up_max_seconds
         self.wake_words = wake_words
 
         hf_logging.set_verbosity_error()
@@ -50,10 +53,12 @@ class VoiceBot:
             model_id=self.text_model_id,
             temperature=self.temperature,
             wake_words=self.wake_words,
+            follow_up_max_seconds=self.follow_up_max_seconds,
         )
 
     def run(self) -> None:
         """Run the bot."""
+        last_response_time = dt.datetime(year=1900, month=1, day=1)
         while True:
             speech = record_speech(
                 sample_rate=self.sample_rate,
@@ -65,5 +70,8 @@ class VoiceBot:
             )
             text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             if text:
-                response = self.text_engine.generate_response(prompt=text)
+                response = self.text_engine.generate_response(
+                    prompt=text, last_response_time=last_response_time
+                )
                 apple_synthesis(text=response)
+                last_response_time = dt.datetime.now()

@@ -4,6 +4,7 @@ import openai
 from dotenv import load_dotenv
 import os
 import logging
+import datetime as dt
 
 
 load_dotenv()
@@ -11,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """
-Du hedder Robert og er en dansk stemmerobot. Du er sød, rar og hjælpsom.
+Du hedder Robert og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
+er korte og præcise.
 """
 
 
@@ -24,28 +26,43 @@ class TextEngine:
     """
 
     def __init__(
-        self, model_id: str, temperature: float, wake_words: list[str]
+        self,
+        model_id: str,
+        temperature: float,
+        wake_words: list[str],
+        follow_up_max_seconds: float,
     ) -> None:
         self.model_id = model_id
         self.temperature = temperature
         self.wake_words = wake_words
-        self.conversation: list[dict[str, str]] = [
-            dict(role="system", content=SYSTEM_PROMPT.strip())
-        ]
+        self.follow_up_max_seconds = follow_up_max_seconds
         openai.api_key = os.getenv("OPENAI_API_KEY")
 
-    def generate_response(self, prompt: str) -> str | None:
+    def reset_conversation(self) -> None:
+        self.conversation = [dict(role="system", content=SYSTEM_PROMPT.strip())]
+
+    def generate_response(
+        self, prompt: str, last_response_time: dt.datetime
+    ) -> str | None:
         """Generate a new response from a prompt.
 
         Args:
             prompt: Prompt to generate a response from.
+            last_response_time: Time of the last response.
 
         Returns:
             Generated response, or None if prompt is empty.
         """
-        if all(word not in prompt for word in self.wake_words):
-            logger.info("Prompt does not contain any of the wake words, skipping.")
-            return None
+        now = dt.datetime.now()
+        seconds_since_last_response = (now - last_response_time).total_seconds()
+        if seconds_since_last_response > self.follow_up_max_seconds:
+            self.reset_conversation()
+            if all(word not in prompt for word in self.wake_words):
+                logger.info("Prompt does not contain any of the wake words, skipping.")
+                return None
+
+        for word in self.wake_words:
+            prompt = prompt.replace(word, "").strip()
 
         self.conversation.append(dict(role="user", content=prompt))
         llm_answer = openai.ChatCompletion.create(
