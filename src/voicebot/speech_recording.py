@@ -13,6 +13,7 @@ def record_speech(
     sample_rate: int,
     num_seconds_per_chunk: float,
     min_audio_threshold: float,
+    max_seconds_silence: float,
 ) -> np.ndarray:
     """Record speech and return it as text.
 
@@ -32,7 +33,7 @@ def record_speech(
         input=True,
     )
 
-    max_num_silent_frames = 1 // num_seconds_per_chunk
+    max_num_silent_frames = max_seconds_silence // num_seconds_per_chunk
     chunk_size = int(sample_rate * num_seconds_per_chunk)
 
     frames: list[np.ndarray] = list()

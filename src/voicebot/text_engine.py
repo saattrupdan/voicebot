@@ -9,10 +9,17 @@ load_dotenv()
 
 
 class TextEngine:
-    """The engine that produces new responses."""
+    """The engine that produces new responses.
 
-    def __init__(self, temperature: float) -> None:
+    Args:
+        model_id: ID of the model to use.
+        temperature: Temperature to use for generation.
+    """
+
+    def __init__(self, model_id: str, temperature: float, wake_word: str) -> None:
+        self.model_id = model_id
         self.temperature = temperature
+        self.wake_word = wake_word
         self.conversation: list[dict[str, str]] = [
             dict(role="system", content="Du er en dansk stemmerobot, og er sød og rar.")
         ]
@@ -27,12 +34,12 @@ class TextEngine:
         Returns:
             Generated response, or None if prompt is empty.
         """
-        if prompt == "":
+        if self.wake_word not in prompt:
             return None
 
         self.conversation.append(dict(role="user", content=prompt))
         llm_answer = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model=self.model_id,
             messages=self.conversation,
             temperature=self.temperature,
         )

@@ -9,8 +9,11 @@ dirs:
   final: final
   models: models
 
+text_model_id: gpt-3.5-turbo
 asr_model_id: chcaa/xls-r-300m-danish-nst-cv9
+wake_word: robot
 sample_rate: 16_000
 temperature: 0.3
 num_seconds_per_chunk: 0.25
 min_audio_threshold: 0.05
+max_seconds_silence: 1

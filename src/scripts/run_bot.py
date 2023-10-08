@@ -13,11 +13,14 @@ def main(cfg: DictConfig) -> None:
         cfg: Hydra configuration object.
     """
     bot = VoiceBot(
+        text_model_id=cfg.text_model_id,
         asr_model_id=cfg.asr_model_id,
         sample_rate=cfg.sample_rate,
         temperature=cfg.temperature,
         num_seconds_per_chunk=cfg.num_seconds_per_chunk,
         min_audio_threshold=cfg.min_audio_threshold,
+        max_seconds_silence=cfg.max_seconds_silence,
+        wake_word=cfg.wake_word,
     )
     bot.run()
 
