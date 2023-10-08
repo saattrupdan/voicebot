@@ -7,7 +7,7 @@ ______________________________________________________________________
 [![Documentation](https://img.shields.io/badge/docs-passing-green)](https://saattrupdan.github.io/Voicebot/voicebot.html)
 [![License](https://img.shields.io/github/license/saattrupdan/Voicebot)](https://github.com/saattrupdan/Voicebot/blob/main/LICENSE)
 [![LastCommit](https://img.shields.io/github/last-commit/saattrupdan/Voicebot)](https://github.com/saattrupdan/Voicebot/commits/main)
-[![Code Coverage](https://img.shields.io/badge/Coverage-0%25-red.svg)](https://github.com/saattrupdan/Voicebot/tree/main/tests)
+[![Code Coverage](https://img.shields.io/badge/Coverage-40%25-orange.svg)](https://github.com/saattrupdan/Voicebot/tree/main/tests)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.0-4baaaa.svg)](https://github.com/saattrupdan/Voicebot/blob/main/CODE_OF_CONDUCT.md)
 
 
@@ -54,7 +54,6 @@ publishing the code as a package and more.
 │       └── docs.yaml
 ├── .gitignore
 ├── .pre-commit-config.yaml
-├── CHANGELOG.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── LICENSE
@@ -65,18 +64,20 @@ publishing the code as a package and more.
 │   └── hydra
 │       └── job_logging
 │           └── custom.yaml
-├── data
 ├── makefile
-├── models
-├── notebooks
 ├── poetry.toml
 ├── pyproject.toml
 ├── src
 │   ├── scripts
 │   │   ├── fix_dot_env_file.py
-│   │   └── versioning.py
+│   │   └── run_bot.py
 │   └── voicebot
-│       └── __init__.py
+│       ├── __init__.py
+│       ├── bot.py
+│       ├── speech_recognition.py
+│       ├── speech_recording.py
+│       ├── speech_synthesis.py
+│       └── text_engine.py
 └── tests
     ├── __init__.py
     └── test_dummy.py
