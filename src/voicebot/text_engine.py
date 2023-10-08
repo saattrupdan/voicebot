@@ -52,4 +52,5 @@ class TextEngine:
         )
         response: str = llm_answer.choices[0].message.content.strip()
         self.conversation.append(dict(role="assistant", content=response))
+        logger.info(f"Generated the response: {response!r}")
         return response

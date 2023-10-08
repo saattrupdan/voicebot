@@ -39,6 +39,8 @@ def record_speech(
     max_num_silent_frames = max_seconds_silence // num_seconds_per_chunk
     chunk_size = int(sample_rate * num_seconds_per_chunk)
 
+    logger.info("Listening...")
+
     frames: list[np.ndarray] = list()
     num_silent_frames: int = 0
     has_begun_talking: bool = False
@@ -57,7 +59,7 @@ def record_speech(
                 num_silent_frames >= max_num_silent_frames
                 and seconds_audio < min_seconds_audio
             ):
-                logger.info("Audio too short!")
+                logger.info("Audio too short, resetting. Listening...")
                 frames = list()
                 num_silent_frames = 0
                 has_begun_talking = False
