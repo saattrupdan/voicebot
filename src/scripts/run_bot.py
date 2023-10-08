@@ -20,6 +20,7 @@ def main(cfg: DictConfig) -> None:
         num_seconds_per_chunk=cfg.num_seconds_per_chunk,
         min_audio_threshold=cfg.min_audio_threshold,
         max_seconds_silence=cfg.max_seconds_silence,
+        min_seconds_audio=cfg.min_seconds_audio,
         wake_word=cfg.wake_word,
     )
     bot.run()

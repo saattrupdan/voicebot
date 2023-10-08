@@ -24,6 +24,7 @@ class VoiceBot:
         num_seconds_per_chunk: float,
         min_audio_threshold: float,
         max_seconds_silence: float,
+        min_seconds_audio: float,
         wake_word: str,
     ) -> None:
         self.text_model_id = text_model_id
@@ -33,6 +34,7 @@ class VoiceBot:
         self.num_seconds_per_chunk = num_seconds_per_chunk
         self.min_audio_threshold = min_audio_threshold
         self.max_seconds_silence = max_seconds_silence
+        self.min_seconds_audio = min_seconds_audio
         self.wake_word = wake_word
 
         hf_logging.set_verbosity_error()
@@ -54,12 +56,14 @@ class VoiceBot:
                 num_seconds_per_chunk=self.num_seconds_per_chunk,
                 min_audio_threshold=self.min_audio_threshold,
                 max_seconds_silence=self.max_seconds_silence,
+                min_seconds_audio=self.min_seconds_audio,
             )
 
             text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
-            logger.info(f"Heard the following: {text!r}")
+            if text:
+                logger.info(f"Heard the following: {text!r}")
 
-            response = self.text_engine.generate_response(prompt=text)
-            logger.info(f"Generated the response: {response!r}")
+                response = self.text_engine.generate_response(prompt=text)
+                logger.info(f"Generated the response: {response!r}")
 
-            apple_synthesis(text=response)
+                apple_synthesis(text=response)

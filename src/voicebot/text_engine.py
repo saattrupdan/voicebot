@@ -3,9 +3,13 @@
 import openai
 from dotenv import load_dotenv
 import os
+import logging
 
 
 load_dotenv()
+
+
+logger = logging.getLogger(__name__)
 
 
 class TextEngine:
@@ -35,6 +39,9 @@ class TextEngine:
             Generated response, or None if prompt is empty.
         """
         if self.wake_word not in prompt:
+            logger.info(
+                f"Prompt does not contain wake word ({self.wake_word!r}), skipping."
+            )
             return None
 
         self.conversation.append(dict(role="user", content=prompt))
