@@ -6,7 +6,6 @@ from .speech_synthesis import apple_synthesis
 from .text_engine import TextEngine
 from transformers import pipeline
 import transformers.utils.logging as hf_logging
-import torch
 import logging
 import datetime as dt
 
@@ -44,10 +43,9 @@ class VoiceBot:
         self.wake_words = wake_words
 
         hf_logging.set_verbosity_error()
+
         self.asr_pipeline = pipeline(
-            task="automatic-speech-recognition",
-            model=self.asr_model_id,
-            device=0 if torch.cuda.is_available() else -1,
+            task="automatic-speech-recognition", model=self.asr_model_id
         )
         self.text_engine = TextEngine(
             model_id=self.text_model_id,
