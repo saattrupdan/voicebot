@@ -26,6 +26,7 @@ class VoiceBot:
         min_audio_threshold: float,
         max_seconds_silence: float,
         min_seconds_audio: float,
+        max_seconds_audio: float,
         wake_words: list[str],
     ) -> None:
         self.text_model_id = text_model_id
@@ -36,6 +37,7 @@ class VoiceBot:
         self.min_audio_threshold = min_audio_threshold
         self.max_seconds_silence = max_seconds_silence
         self.min_seconds_audio = min_seconds_audio
+        self.max_seconds_audio = max_seconds_audio
         self.wake_words = wake_words
 
         hf_logging.set_verbosity_error()
@@ -59,6 +61,7 @@ class VoiceBot:
                 min_audio_threshold=self.min_audio_threshold,
                 max_seconds_silence=self.max_seconds_silence,
                 min_seconds_audio=self.min_seconds_audio,
+                max_seconds_audio=self.max_seconds_audio,
             )
             text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             if text:

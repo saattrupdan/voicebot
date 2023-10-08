@@ -18,3 +18,4 @@ num_seconds_per_chunk: 0.25
 min_audio_threshold: 0.05
 max_seconds_silence: 1
 min_seconds_audio: 0.5
+max_seconds_audio: 10

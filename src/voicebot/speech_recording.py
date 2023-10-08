@@ -15,6 +15,7 @@ def record_speech(
     min_audio_threshold: float,
     max_seconds_silence: float,
     min_seconds_audio: float,
+    max_seconds_audio: float,
 ) -> np.ndarray:
     """Record speech and return it as text.
 
@@ -24,6 +25,7 @@ def record_speech(
         min_audio_threshold: Minimum amplitude for audio to be considered speech.
         max_seconds_silence: Maximum number of seconds of silence before the recording
         min_seconds_audio: Minimum number of seconds of audio to be considered speech.
+        max_seconds_audio: Maximum number of seconds of audio to be considered speech.
 
     Returns:
         Recorded speech.
@@ -70,6 +72,10 @@ def record_speech(
             has_begun_talking = True
             num_silent_frames = 0
             frames.append(frame)
+
+        if len(frames) * num_seconds_per_chunk >= max_seconds_audio:
+            logger.info("Max audio length reached, stopping.")
+            break
 
     stream.stop_stream()
     stream.close()
