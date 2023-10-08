@@ -46,7 +46,6 @@ def record_speech(
         # Stop the stream when the user stops talking
         if frame.max() < min_audio_threshold and has_begun_talking:
             num_silent_frames += 1
-            logger.info(f"Silence for {num_silent_frames} frames...")
         elif frame.max() >= min_audio_threshold:
             if not has_begun_talking:
                 logger.info("Audio detected!")
@@ -58,5 +57,4 @@ def record_speech(
     stream.close()
     audio.terminate()
 
-    breakpoint()
     return np.concatenate(frames, axis=0)

@@ -25,7 +25,7 @@ class VoiceBot:
     ) -> None:
         hf_logging.set_verbosity_error()
         self.asr_pipeline = pipeline(
-            model=asr_model_id, task="automatic-speech-recognition", device="mps"
+            model=asr_model_id, task="automatic-speech-recognition"
         )
         self.text_engine = TextEngine(temperature=temperature)
         self.sample_rate = sample_rate
@@ -42,11 +42,7 @@ class VoiceBot:
                 min_audio_threshold=self.min_audio_threshold,
             )
 
-            text = transcribe_speech(
-                speech=speech,
-                sample_rate=self.sample_rate,
-                asr_pipeline=self.asr_pipeline,
-            )
+            text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             logger.info(f"Heard the following: {text!r}")
 
             response = self.text_engine.generate_response(prompt=text)

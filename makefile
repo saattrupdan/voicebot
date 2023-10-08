@@ -138,6 +138,3 @@ tree:  ## Print directory tree
 		-I raw \
 		-I .ruff_cache \
 		.
-
-run:  ## Run the voicebot
-	@PYTORCH_ENABLE_MPS_FALLBACK=1 poetry run python src/scripts/run_bot.py
