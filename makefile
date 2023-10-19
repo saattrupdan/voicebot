@@ -28,12 +28,12 @@ help:
 
 install-poetry:
 	@echo "Installing poetry..."
-	@pip3 install --force poetry==1.4.0
+	@python3.11 -m pip install --force poetry==1.4.0
 	@$(eval include ${HOME}/.poetry/env)
 
 uninstall-poetry:
 	@echo "Uninstalling poetry..."
-	@pip3 uninstall poetry
+	@python3.11 -m pip uninstall poetry
 
 install: ## Install dependencies
 	@echo "Installing..."
