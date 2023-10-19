@@ -109,3 +109,5 @@ data/final/*
 
 # Models
 models/
+
+.temp*
