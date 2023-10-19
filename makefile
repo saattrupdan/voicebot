@@ -28,7 +28,7 @@ help:
 
 install-poetry:
 	@echo "Installing poetry..."
-	@pipx install --force poetry==1.6.0
+	@pipx install --force poetry==1.5.1
 	@$(eval include ${HOME}/.poetry/env)
 
 uninstall-poetry:
