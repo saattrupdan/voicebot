@@ -1,8 +1,9 @@
 """A voice bot."""
 
+import pyaudio
 from .speech_recording import record_speech
 from .speech_recognition import transcribe_speech
-from .speech_synthesis import apple_synthesis
+from .speech_synthesis import synthesise_speech
 from .text_engine import TextEngine
 from transformers import pipeline
 import transformers.utils.logging as hf_logging
@@ -65,11 +66,12 @@ class VoiceBot:
                 max_seconds_silence=self.max_seconds_silence,
                 min_seconds_audio=self.min_seconds_audio,
                 max_seconds_audio=self.max_seconds_audio,
+                audio_format=pyaudio.paFloat32,
             )
             text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             if text:
                 response = self.text_engine.generate_response(
                     prompt=text, last_response_time=last_response_time
                 )
-                apple_synthesis(text=response)
+                synthesise_speech(text=response)
                 last_response_time = dt.datetime.now()

@@ -1,7 +1,6 @@
 """Recording of speech."""
 
 import pyaudio
-import sys
 import numpy as np
 import logging
 
@@ -16,6 +15,7 @@ def record_speech(
     max_seconds_silence: float,
     min_seconds_audio: float,
     max_seconds_audio: float,
+    audio_format: int,
 ) -> np.ndarray:
     """Record speech and return it as text.
 
@@ -26,14 +26,15 @@ def record_speech(
         max_seconds_silence: Maximum number of seconds of silence before the recording
         min_seconds_audio: Minimum number of seconds of audio to be considered speech.
         max_seconds_audio: Maximum number of seconds of audio to be considered speech.
+        audio_format: Audio format to store the audio as.
 
     Returns:
         Recorded speech.
     """
     audio = pyaudio.PyAudio()
     stream = audio.open(
-        format=pyaudio.paFloat32,
-        channels=1 if sys.platform == "darwin" else 2,
+        format=audio_format,
+        channels=1,
         rate=sample_rate,
         input=True,
     )
