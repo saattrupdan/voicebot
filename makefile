@@ -90,7 +90,7 @@ install-poetry:
 	fi
 
 setup-poetry:
-	@poetry env use python3.11 && poetry install --quiet
+	@poetry env use python3.11 && poetry install
 
 setup-environment-variables:
 	@poetry run python src/scripts/fix_dot_env_file.py
