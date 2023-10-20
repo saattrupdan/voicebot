@@ -39,7 +39,6 @@ readme-coverage-badger = ">=0.1.2,<1.0.0"
 
 [[tool.poetry.source]]
 name = "pypi"
-url = "https://pypi.org/simple"
 
 [[tool.poetry.source]]
 name = "piwheels"
