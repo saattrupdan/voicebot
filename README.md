@@ -54,6 +54,7 @@ publishing the code as a package and more.
 │       └── docs.yaml
 ├── .gitignore
 ├── .pre-commit-config.yaml
+├── .ruff_cache
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── LICENSE
@@ -64,15 +65,20 @@ publishing the code as a package and more.
 │   └── hydra
 │       └── job_logging
 │           └── custom.yaml
+├── docs
+│   └── .gitkeep
 ├── makefile
+├── poetry.lock
 ├── poetry.toml
 ├── pyproject.toml
 ├── src
 │   ├── scripts
+│   │   ├── __pycache__
 │   │   ├── fix_dot_env_file.py
 │   │   └── run_bot.py
 │   └── voicebot
 │       ├── __init__.py
+│       ├── __pycache__
 │       ├── bot.py
 │       ├── speech_recognition.py
 │       ├── speech_recording.py
@@ -80,5 +86,6 @@ publishing the code as a package and more.
 │       └── text_engine.py
 └── tests
     ├── __init__.py
+    ├── __pycache__
     └── test_dummy.py
 ```
