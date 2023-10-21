@@ -23,6 +23,8 @@ class TextEngine:
     Args:
         model_id: ID of the model to use.
         temperature: Temperature to use for generation.
+        wake_words: Words that should trigger a new conversation.
+        follow_up_max_seconds: Maximum number of seconds between responses before
     """
 
     def __init__(
