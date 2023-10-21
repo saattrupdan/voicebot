@@ -22,6 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install portaudio on Ubuntu
+        run: apt install -y portaudio19-dev python3-pyaudio
+        if: matrix.os == "ubuntu-latest"
+
+      - name: Install portaudio on MacOS
+        run: brew install portaudio
+        if: matrix.os == "macos-latest"
+
       - name: Install Poetry
         run: pipx install --force poetry==1.5.1
 
