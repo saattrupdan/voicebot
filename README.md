@@ -4,11 +4,11 @@ A simple Danish voice bot.
 
 ______________________________________________________________________
 [![PyPI Status](https://badge.fury.io/py/voicebot.svg)](https://pypi.org/project/voicebot/)
-[![Documentation](https://img.shields.io/badge/docs-passing-green)](https://saattrupdan.github.io/Voicebot/voicebot.html)
-[![License](https://img.shields.io/github/license/saattrupdan/Voicebot)](https://github.com/saattrupdan/Voicebot/blob/main/LICENSE)
-[![LastCommit](https://img.shields.io/github/last-commit/saattrupdan/Voicebot)](https://github.com/saattrupdan/Voicebot/commits/main)
-[![Code Coverage](https://img.shields.io/badge/Coverage-40%25-orange.svg)](https://github.com/saattrupdan/Voicebot/tree/main/tests)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.0-4baaaa.svg)](https://github.com/saattrupdan/Voicebot/blob/main/CODE_OF_CONDUCT.md)
+[![Documentation](https://img.shields.io/badge/docs-passing-green)](https://saattrupdan.github.io/voicebot/voicebot.html)
+[![License](https://img.shields.io/github/license/saattrupdan/voicebot)](https://github.com/saattrupdan/voicebot/blob/main/LICENSE)
+[![LastCommit](https://img.shields.io/github/last-commit/saattrupdan/voicebot)](https://github.com/saattrupdan/voicebot/commits/main)
+[![Code Coverage](https://img.shields.io/badge/Coverage-40%25-orange.svg)](https://github.com/saattrupdan/voicebot/tree/main/tests)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.0-4baaaa.svg)](https://github.com/saattrupdan/voicebot/blob/main/CODE_OF_CONDUCT.md)
 
 
 Developers:
