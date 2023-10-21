@@ -30,12 +30,15 @@ jobs:
           cache: "poetry"
 
       - name: Install Dependencies
-        run: poetry install
-
-      - name: Build documentation
         run: |
           poetry env use "3.11"
-          poetry run pdoc --docformat google src/voicebot -o docs
+          poetry install --no-interaction --no-cache
+
+      - name: Fix PyTorch Poetry bug
+        run: poetry add torch=2.0.0
+
+      - name: Build documentation
+        run: poetry run pdoc --docformat google src/voicebot -o docs
 
       - name: Compress documentation
         run: tar --directory docs/ -hcf artifact.tar .
