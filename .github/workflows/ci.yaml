@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install portaudio on Ubuntu
-        run: apt install -y portaudio19-dev python3-pyaudio
+        run: sudo apt-get install -y portaudio19-dev python3-pyaudio
         if: matrix.os == "ubuntu-latest"
 
       - name: Install portaudio on MacOS
