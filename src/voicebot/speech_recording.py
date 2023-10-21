@@ -48,7 +48,7 @@ def record_speech(
     num_silent_frames: int = 0
     has_begun_talking: bool = False
     while num_silent_frames < max_num_silent_frames:
-        # Record a chunk of audio and append it to the list of frames
+        # Record a chunk of audio
         chunk = stream.read(num_frames=chunk_size, exception_on_overflow=False)
         frame = np.frombuffer(buffer=chunk, dtype=np.float32)
 
