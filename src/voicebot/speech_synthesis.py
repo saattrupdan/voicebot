@@ -9,6 +9,7 @@ from pydub import AudioSegment
 from pydub.playback import play
 
 
+# Download the NLTK tokenizer model
 nltk.download("punkt", quiet=True)
 
 
@@ -29,6 +30,7 @@ def synthesise_speech(text: str | None) -> None:
         output_path = Path(".temp.mp3")
         tts.save(savefile=output_path)
         play_sound(path=output_path)
+        output_path.unlink()
 
 
 def play_sound(path: str | Path) -> None:
