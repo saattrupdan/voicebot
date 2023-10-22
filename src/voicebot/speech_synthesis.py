@@ -35,7 +35,7 @@ def play_sound(path: str | Path) -> None:
     """Play a sound file.
 
     Args:
-        filename: Name of the sound file.
+        path: The path to the sound file.
     """
     path = Path(path)
     match path.suffix.lower():

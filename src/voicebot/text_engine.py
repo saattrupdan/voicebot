@@ -21,10 +21,10 @@ class TextEngine:
     """The engine that produces new responses.
 
     Args:
-        model_id: ID of the model to use.
+        model_id: OpenAI model ID of the model to use.
         temperature: Temperature to use for generation.
         wake_words: Words that should trigger a new conversation.
-        follow_up_max_seconds: Maximum number of seconds between responses before
+        follow_up_max_seconds: Maximum number of seconds to wait for a follow-up.
     """
 
     def __init__(
@@ -41,6 +41,7 @@ class TextEngine:
         openai.api_key = os.getenv("OPENAI_API_KEY")
 
     def reset_conversation(self) -> None:
+        """Reset the conversation, only keeping the system prompt."""
         self.conversation = [dict(role="system", content=SYSTEM_PROMPT.strip())]
 
     def generate_response(
@@ -53,7 +54,7 @@ class TextEngine:
             last_response_time: Time of the last response.
 
         Returns:
-            Generated response, or None if prompt is empty.
+            Generated response, or None if prompt should not be responded to.
         """
         now = dt.datetime.now()
         seconds_since_last_response = (now - last_response_time).total_seconds()
@@ -63,6 +64,8 @@ class TextEngine:
                 logger.info("Prompt does not contain any of the wake words, skipping.")
                 return None
 
+        # Remove all the wake words from the prompt, to prevent them from influencing
+        # the response.
         for word in self.wake_words:
             prompt = prompt.replace(word, "").strip()
 

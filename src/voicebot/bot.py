@@ -15,7 +15,21 @@ logger = logging.getLogger(__name__)
 
 
 class VoiceBot:
-    """A voice bot."""
+    """A voice bot.
+
+    Args:
+        text_model_id: ID of the text generation model to use.
+        asr_model_id: ID of the automatic speech recognition model to use.
+        sample_rate: Sample rate to use for recording.
+        temperature: Temperature to use for text generation.
+        num_seconds_per_chunk: Number of seconds to record per chunk.
+        min_audio_threshold: Minimum audio threshold for recording.
+        max_seconds_silence: Maximum number of seconds of silence before stopping
+        min_seconds_audio: Minimum number of seconds of audio before stopping
+        max_seconds_audio: Maximum number of seconds of audio before stopping
+        follow_up_max_seconds: Maximum number of seconds between responses before
+        wake_words: Words that should trigger a new conversation.
+    """
 
     def __init__(
         self,
