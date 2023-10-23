@@ -3,6 +3,7 @@
 import pyaudio
 import numpy as np
 import logging
+import datetime as dt
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ def record_speech(
     min_seconds_audio: float,
     max_seconds_audio: float,
     audio_format: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
 
     Args:
@@ -29,7 +30,8 @@ def record_speech(
         audio_format: Audio format to store the audio as.
 
     Returns:
-        Recorded speech.
+        Recorded speech, and the time at which the recording started (or None if no
+        speech was recorded).
     """
     audio = pyaudio.PyAudio()
     stream = audio.open(
@@ -47,6 +49,7 @@ def record_speech(
     frames: list[np.ndarray] = list()
     num_silent_frames: int = 0
     has_begun_talking: bool = False
+    audio_start = None
     while num_silent_frames < max_num_silent_frames:
         # Record a chunk of audio
         chunk = stream.read(num_frames=chunk_size, exception_on_overflow=False)
@@ -70,6 +73,7 @@ def record_speech(
         elif frame.max() >= min_audio_threshold:
             if not has_begun_talking:
                 logger.info("Audio detected!")
+                audio_start = dt.datetime.now()
             has_begun_talking = True
             num_silent_frames = 0
             frames.append(frame)
@@ -82,4 +86,4 @@ def record_speech(
     stream.close()
     audio.terminate()
 
-    return np.concatenate(frames, axis=0)
+    return np.concatenate(frames, axis=0), audio_start

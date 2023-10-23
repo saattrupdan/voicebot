@@ -73,7 +73,7 @@ class VoiceBot:
         """Run the bot."""
         last_response_time = dt.datetime(year=1900, month=1, day=1)
         while True:
-            speech = record_speech(
+            speech, audio_start = record_speech(
                 sample_rate=self.sample_rate,
                 num_seconds_per_chunk=self.num_seconds_per_chunk,
                 min_audio_threshold=self.min_audio_threshold,
@@ -82,10 +82,14 @@ class VoiceBot:
                 max_seconds_audio=self.max_seconds_audio,
                 audio_format=pyaudio.paFloat32,
             )
+            if audio_start is None:
+                continue
             text = transcribe_speech(speech=speech, asr_pipeline=self.asr_pipeline)
             if text:
                 response = self.text_engine.generate_response(
-                    prompt=text, last_response_time=last_response_time
+                    prompt=text,
+                    last_response_time=last_response_time,
+                    current_response_time=audio_start,
                 )
                 synthesise_speech(text=response)
                 last_response_time = dt.datetime.now()

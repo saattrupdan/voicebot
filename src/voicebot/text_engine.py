@@ -45,19 +45,23 @@ class TextEngine:
         self.conversation = [dict(role="system", content=SYSTEM_PROMPT.strip())]
 
     def generate_response(
-        self, prompt: str, last_response_time: dt.datetime
+        self,
+        prompt: str,
+        last_response_time: dt.datetime,
+        current_response_time: dt.datetime,
     ) -> str | None:
         """Generate a new response from a prompt.
 
         Args:
             prompt: Prompt to generate a response from.
             last_response_time: Time of the last response.
+            current_response_time: Time of the current response.
 
         Returns:
             Generated response, or None if prompt should not be responded to.
         """
-        now = dt.datetime.now()
-        seconds_since_last_response = (now - last_response_time).total_seconds()
+        response_delay = current_response_time - last_response_time
+        seconds_since_last_response = response_delay.total_seconds()
         if seconds_since_last_response > self.follow_up_max_seconds:
             self.reset_conversation()
             if all(word not in prompt for word in self.wake_words):
