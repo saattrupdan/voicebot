@@ -24,6 +24,7 @@ def main(cfg: DictConfig) -> None:
         max_seconds_audio=cfg.max_seconds_audio,
         follow_up_max_seconds=cfg.follow_up_max_seconds,
         wake_words=cfg.wake_words,
+        wake_word_response=cfg.wake_word_response,
     )
     bot.run()
 

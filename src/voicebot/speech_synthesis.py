@@ -13,24 +13,23 @@ from pydub.playback import play
 nltk.download("punkt", quiet=True)
 
 
-def synthesise_speech(text: str | None) -> None:
+def synthesise_speech(text: str) -> None:
     """Synthesise speech from text.
 
     Args:
-        text: Text to be spoken, or None if nothing should be spoken.
+        text: Text to be spoken.
     """
-    if text is not None:
-        tts = gTTS(
-            text=text,
-            tld="dk",
-            lang="da",
-            lang_check=False,
-            tokenizer_func=partial(sent_tokenize, language="danish"),
-        )
-        output_path = Path(".temp.mp3")
-        tts.save(savefile=output_path)
-        play_sound(path=output_path)
-        output_path.unlink()
+    tts = gTTS(
+        text=text,
+        tld="dk",
+        lang="da",
+        lang_check=False,
+        tokenizer_func=partial(sent_tokenize, language="danish"),
+    )
+    output_path = Path(".temp.mp3")
+    tts.save(savefile=output_path)
+    play_sound(path=output_path)
+    output_path.unlink()
 
 
 def play_sound(path: str | Path) -> None:

@@ -29,6 +29,7 @@ class VoiceBot:
         max_seconds_audio: Maximum number of seconds of audio before stopping
         follow_up_max_seconds: Maximum number of seconds between responses before
         wake_words: Words that should trigger a new conversation.
+        wake_word_response: Response to give when a wake word is detected.
     """
 
     def __init__(
@@ -44,6 +45,7 @@ class VoiceBot:
         max_seconds_audio: float,
         follow_up_max_seconds: float,
         wake_words: list[str],
+        wake_word_response: str,
     ) -> None:
         self.text_model_id = text_model_id
         self.asr_model_id = asr_model_id
@@ -56,6 +58,7 @@ class VoiceBot:
         self.max_seconds_audio = max_seconds_audio
         self.follow_up_max_seconds = follow_up_max_seconds
         self.wake_words = wake_words
+        self.wake_word_response = wake_word_response
 
         hf_logging.set_verbosity_error()
 
@@ -66,6 +69,7 @@ class VoiceBot:
             model_id=self.text_model_id,
             temperature=self.temperature,
             wake_words=self.wake_words,
+            wake_word_response=self.wake_word_response,
             follow_up_max_seconds=self.follow_up_max_seconds,
         )
 
@@ -91,5 +95,6 @@ class VoiceBot:
                     last_response_time=last_response_time,
                     current_response_time=audio_start,
                 )
-                synthesise_speech(text=response)
-                last_response_time = dt.datetime.now()
+                if response:
+                    synthesise_speech(text=response)
+                    last_response_time = dt.datetime.now()

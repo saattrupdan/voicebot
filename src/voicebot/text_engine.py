@@ -24,6 +24,7 @@ class TextEngine:
         model_id: OpenAI model ID of the model to use.
         temperature: Temperature to use for generation.
         wake_words: Words that should trigger a new conversation.
+        wake_word_response: Response to give when a wake word is detected.
         follow_up_max_seconds: Maximum number of seconds to wait for a follow-up.
     """
 
@@ -32,11 +33,13 @@ class TextEngine:
         model_id: str,
         temperature: float,
         wake_words: list[str],
+        wake_word_response: str,
         follow_up_max_seconds: float,
     ) -> None:
         self.model_id = model_id
         self.temperature = temperature
         self.wake_words = wake_words
+        self.wake_word_response = wake_word_response
         self.follow_up_max_seconds = follow_up_max_seconds
         openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -67,6 +70,12 @@ class TextEngine:
             if all(word not in prompt for word in self.wake_words):
                 logger.info("Prompt does not contain any of the wake words, skipping.")
                 return None
+            else:
+                logger.info(
+                    "Prompt contains a wake word, responding with "
+                    f"{self.wake_word_response!r}."
+                )
+                return self.wake_word_response
 
         # Remove all the wake words from the prompt, to prevent them from influencing
         # the response.
