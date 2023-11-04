@@ -30,5 +30,5 @@ min_audio_threshold: 0.05
 max_seconds_silence: 1
 min_seconds_audio: 0.5
 max_seconds_audio: 10
-follow_up_max_seconds: 3
+follow_up_max_seconds: 1
 wake_word_response: "Hvad kan jeg hjælpe med?"
