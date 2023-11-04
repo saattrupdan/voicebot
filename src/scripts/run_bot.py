@@ -12,21 +12,7 @@ def main(cfg: DictConfig) -> None:
     Args:
         cfg: Hydra configuration object.
     """
-    bot = VoiceBot(
-        text_model_id=cfg.text_model_id,
-        asr_model_id=cfg.asr_model_id,
-        sample_rate=cfg.sample_rate,
-        temperature=cfg.temperature,
-        num_seconds_per_chunk=cfg.num_seconds_per_chunk,
-        min_audio_threshold=cfg.min_audio_threshold,
-        max_seconds_silence=cfg.max_seconds_silence,
-        min_seconds_audio=cfg.min_seconds_audio,
-        max_seconds_audio=cfg.max_seconds_audio,
-        follow_up_max_seconds=cfg.follow_up_max_seconds,
-        wake_words=cfg.wake_words,
-        wake_word_response=cfg.wake_word_response,
-    )
-    bot.run()
+    VoiceBot(cfg=cfg).run()
 
 
 if __name__ == "__main__":

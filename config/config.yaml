@@ -11,24 +11,11 @@ dirs:
 
 text_model_id: gpt-3.5-turbo
 asr_model_id: chcaa/xls-r-300m-danish-nst-cv9
-wake_words:
-  - jarvis
-  - jobves
-  - jobet
-  - jobbet
-  - jobbes
-  - jobes
-  - jave
-  - joves
-  - jovig
-  - jarve
-  - charves
 sample_rate: 16_000
 temperature: 0.3
-num_seconds_per_chunk: 0.25
-min_audio_threshold: 0.05
-max_seconds_silence: 1
-min_seconds_audio: 0.5
+num_seconds_per_chunk: 0.08
+min_audio_threshold: 3000
+max_seconds_silence: 1.0
 max_seconds_audio: 10
-follow_up_max_seconds: 1
-wake_word_response: "Hvad kan jeg hjælpe med?"
+follow_up_max_seconds: 2
+wake_word_probability_threshold: 0.5

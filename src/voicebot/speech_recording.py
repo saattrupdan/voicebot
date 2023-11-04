@@ -1,33 +1,31 @@
 """Recording of speech."""
 
+from omegaconf import DictConfig
 import pyaudio
 import numpy as np
 import logging
 import datetime as dt
+import openwakeword as oww
+import onnxruntime as ort
 
 
 logger = logging.getLogger(__name__)
 
 
+# Load the wake word model. This usually produces logs from `onnxruntime`, so we
+# suppress them.
+ort.set_default_logger_severity(3)
+wake_word_model = oww.Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
+
+
 def record_speech(
-    sample_rate: int,
-    num_seconds_per_chunk: float,
-    min_audio_threshold: float,
-    max_seconds_silence: float,
-    min_seconds_audio: float,
-    max_seconds_audio: float,
-    audio_format: int,
+    last_response_time: dt.datetime, cfg: DictConfig
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
 
     Args:
-        sample_rate: Sample rate.
-        num_seconds_per_chunk: Number of seconds per chunk.
-        min_audio_threshold: Minimum amplitude for audio to be considered speech.
-        max_seconds_silence: Maximum number of seconds of silence before the recording
-        min_seconds_audio: Minimum number of seconds of audio to be considered speech.
-        max_seconds_audio: Maximum number of seconds of audio to be considered speech.
-        audio_format: Audio format to store the audio as.
+        last_response_time: Time of the last response.
+        cfg: Hydra configuration object.
 
     Returns:
         Recorded speech, and the time at which the recording started (or None if no
@@ -35,14 +33,14 @@ def record_speech(
     """
     audio = pyaudio.PyAudio()
     stream = audio.open(
-        format=audio_format,
+        format=pyaudio.paInt16,
         channels=1,
-        rate=sample_rate,
+        rate=cfg.sample_rate,
         input=True,
     )
 
-    max_num_silent_frames = max_seconds_silence // num_seconds_per_chunk
-    chunk_size = int(sample_rate * num_seconds_per_chunk)
+    max_num_silent_frames = cfg.max_seconds_silence // cfg.num_seconds_per_chunk
+    chunk_size = int(cfg.sample_rate * cfg.num_seconds_per_chunk)
 
     logger.info("Listening...")
 
@@ -53,37 +51,53 @@ def record_speech(
     while num_silent_frames < max_num_silent_frames:
         # Record a chunk of audio
         chunk = stream.read(num_frames=chunk_size, exception_on_overflow=False)
-        frame = np.frombuffer(buffer=chunk, dtype=np.float32)
+        frame = np.frombuffer(buffer=chunk, dtype=np.int16)
+        max_value = frame[~np.isnan(frame)].max()
 
-        # Stop the stream when the user stops talking
-        if frame.max() < min_audio_threshold and has_begun_talking:
-            num_silent_frames += 1
-            seconds_audio = len(frames) * num_seconds_per_chunk
+        if not has_begun_talking:
+            # Check if it hasn't been too long since the last response
+            if max_value >= cfg.min_audio_threshold:
+                response_delay = dt.datetime.now() - last_response_time
+                seconds_since_last_response = response_delay.total_seconds()
+                if seconds_since_last_response < cfg.follow_up_max_seconds:
+                    logger.info("Follow-up detected!")
+                    audio_start = dt.datetime.now()
+                    has_begun_talking = True
+                    num_silent_frames = 0
+                    frames.append(frame)
+                    wake_word_model.reset()
+                    continue
 
-            # If there's been enough silence and the audio is too short, restart
-            if (
-                num_silent_frames >= max_num_silent_frames
-                and seconds_audio < min_seconds_audio
-            ):
-                logger.info("Audio too short, resetting. Listening...")
-                frames = list()
-                num_silent_frames = 0
-                has_begun_talking = False
-
-        elif frame.max() >= min_audio_threshold:
-            if not has_begun_talking:
-                logger.info("Audio detected!")
+            # Check if the wake_word is triggered and that we haven't already started
+            # recording
+            wake_word_probability = wake_word_model.predict(frame)["hey_jarvis"]
+            if wake_word_probability >= cfg.wake_word_probability_threshold:
+                logger.info("Wakeword detected!")
                 audio_start = dt.datetime.now()
-            has_begun_talking = True
-            num_silent_frames = 0
-            frames.append(frame)
+                has_begun_talking = True
+                num_silent_frames = 0
+                frames.append(frame)
+                wake_word_model.reset()
 
-        if len(frames) * num_seconds_per_chunk >= max_seconds_audio:
+            continue
+
+        if len(frames) * cfg.num_seconds_per_chunk >= cfg.max_seconds_audio:
             logger.info("Max audio length reached, stopping.")
             break
+
+        # Check if the audio is silent, and stop recording if it has been silent for
+        # too long
+        if max_value < cfg.min_audio_threshold:
+            num_silent_frames += 1
+        elif max_value >= cfg.min_audio_threshold:
+            num_silent_frames = 0
+            frames.append(frame)
 
     stream.stop_stream()
     stream.close()
     audio.terminate()
 
-    return np.concatenate(frames, axis=0), audio_start
+    # Concatenate the frames into a single array, and convert the datatype to float32
+    audio = np.concatenate(frames, axis=0).astype(np.float32, order="C") / 32768.0
+
+    return audio, audio_start
