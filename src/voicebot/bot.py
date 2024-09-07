@@ -37,6 +37,8 @@ class VoiceBot:
             wakeword_models=["hey_jarvis"], inference_framework="onnx"
         )
         self.text_engine = TextEngine(cfg=cfg)
+
+        logger.info("Loading the speech recognition model...")
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
             model=self.cfg.asr_model_id, device=self.device
         )
@@ -61,7 +63,12 @@ class VoiceBot:
     def run(self) -> None:
         """Run the bot."""
         last_response_time = dt.datetime(year=1900, month=1, day=1)
-        min_audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
+
+        if self.cfg.calibrate:
+            min_audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
+        else:
+            min_audio_threshold = self.cfg.audio_threshold
+
         while True:
             speech, audio_start = record_speech(
                 last_response_time=last_response_time,
