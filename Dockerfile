@@ -12,4 +12,4 @@ RUN poetry env use python 3.11
 RUN poetry install --no-interaction --no-cache --without dev
 
 # Run the script
-CMD poetry run python src/scripts/main.py
+CMD poetry run python src/scripts/run_bot.py

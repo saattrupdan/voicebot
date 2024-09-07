@@ -119,3 +119,5 @@ models/*
 
 # Python cache
 **/__pycache__/
+
+.temp.mp3
