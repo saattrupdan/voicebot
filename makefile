@@ -49,7 +49,6 @@ install: ## Install dependencies
 	@$(MAKE) --quiet setup-environment-variables
 	@$(MAKE) --quiet setup-git
 	@$(MAKE) --quiet install-pre-commit
-	@$(MAKE) --quiet add-repo-to-git
 	@echo "Installed the 'voicebot' project! You can now activate your virtual environment with 'source .venv/bin/activate'."
 	@echo "Note that this is a Poetry project. Use 'poetry add <package>' to install new dependencies and 'poetry remove <package>' to remove them."
 
@@ -100,15 +99,6 @@ setup-git:
 	@git config --local user.name "${GIT_NAME}"
 	@git config --local user.email "${GIT_EMAIL}"
 
-add-repo-to-git:
-	@if [ ! "$(shell git status --short)" = "" ] && [ "$(shell git --no-pager log --all | sed 's/`//g')" = "" ]; then \
-		git add .; \
-		git commit --quiet -m "Initial commit"; \
-	fi
-	@if [ "$(shell git remote)" = "" ]; then \
-		git remote add origin git@github.com:alexandrainst/voicebot.git; \
-	fi
-
 install-pre-commit:  ## Install pre-commit hooks
 	@poetry run pre-commit install
 
@@ -145,6 +135,3 @@ format:  ## Format the project
 
 type-check:  ## Type-check the project
 	@poetry run mypy . --install-types --non-interactive --ignore-missing-imports --show-error-codes --check-untyped-defs
-
-add-rag:  ## Install the Ragger package, for RAG projects
-	@poetry add git+ssh://git@github.com/alexandrainst/ragger.git --extras all

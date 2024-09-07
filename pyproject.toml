@@ -7,7 +7,7 @@ authors = [
 ]
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/alexandrainst/voicebot"
+repository = "https://github.com/saattrupdan/voicebot"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<4.0"
