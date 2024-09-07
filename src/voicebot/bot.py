@@ -7,7 +7,11 @@ import openwakeword as oww
 import torch
 import transformers.utils.logging as hf_logging
 from omegaconf import DictConfig
-from transformers import AutomaticSpeechRecognitionPipeline, pipeline
+from transformers import (
+    AutomaticSpeechRecognitionPipeline,
+    Wav2Vec2ProcessorWithLM,
+    pipeline,
+)
 
 from .speech_recognition import transcribe_speech
 from .speech_recording import calibrate_audio_threshold, record_speech
@@ -34,9 +38,14 @@ class VoiceBot:
         )
         self.text_engine = TextEngine(cfg=cfg)
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
-            task="automatic-speech-recognition",
-            model=self.cfg.asr_model_id,
-            device=self.device,
+            model=self.cfg.asr_model_id, device=self.device
+        )
+
+        # Sanity check that the processor is of the correct type
+        processor_class = self.transcriber.feature_extractor._processor_class
+        assert processor_class == Wav2Vec2ProcessorWithLM.__name__, (
+            "Expected the processor to be of type Wav2Vec2ProcessorWithLM, but got "
+            f"{processor_class}."
         )
 
     @property
