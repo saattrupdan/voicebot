@@ -19,3 +19,7 @@ max_seconds_silence: 1.0
 max_seconds_audio: 10
 follow_up_max_seconds: 2
 wake_word_probability_threshold: 0.5
+
+system_prompt: >
+  Du hedder Jarvis og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
+  er altid super korte og præcise.

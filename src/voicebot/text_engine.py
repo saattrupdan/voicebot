@@ -12,12 +12,6 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """
-Du hedder Robert og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
-er altid super korte og præcise.
-"""
-
-
 class TextEngine:
     """The engine that produces new responses."""
 
@@ -33,7 +27,9 @@ class TextEngine:
 
     def reset_conversation(self) -> None:
         """Reset the conversation, only keeping the system prompt."""
-        self.conversation = [dict(role="system", content=SYSTEM_PROMPT.strip())]
+        self.conversation = [
+            dict(role="system", content=self.cfg.system_prompt.strip())
+        ]
 
     def generate_response(
         self,
