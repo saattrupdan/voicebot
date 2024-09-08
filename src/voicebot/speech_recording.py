@@ -28,14 +28,14 @@ wake_word_model = oww.Model(wakeword_models=["hey_jarvis"], inference_framework=
 
 
 def record_speech(
-    last_response_time: dt.datetime, min_audio_threshold: int, cfg: DictConfig
+    last_response_time: dt.datetime, audio_threshold: int, cfg: DictConfig
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
 
     Args:
         last_response_time:
             Time of the last response.
-        min_audio_threshold:
+        audio_threshold:
             The minimum audio threshold.
         cfg:
             Hydra configuration object.
@@ -60,7 +60,7 @@ def record_speech(
 
             if not has_begun_talking:
                 # Check if it hasn't been too long since the last response
-                if max_value >= min_audio_threshold:
+                if max_value >= audio_threshold:
                     response_delay = dt.datetime.now() - last_response_time
                     seconds_since_last_response = response_delay.total_seconds()
                     if seconds_since_last_response < cfg.follow_up_max_seconds:
@@ -89,17 +89,13 @@ def record_speech(
                 if len(frames) * cfg.num_seconds_per_chunk >= cfg.max_seconds_audio:
                     logger.info("Max audio length reached, stopping.")
                     break
-                if max_value < min_audio_threshold:
+                if max_value < audio_threshold:
                     num_silent_frames += 1
                 else:
                     num_silent_frames = 0
 
-    # Concatenate the frames into a single array, and convert the datatype to float32
-    audio_arr = np.divide(
-        np.concatenate(frames, axis=0), np.float32(32767), dtype=np.float32
-    )
+    audio_arr = np.concatenate(frames, axis=0)
 
-    # Play the audio back
     if cfg.play_back_audio:
         logger.info("Playing back the audio...")
         sounddevice.play(data=audio_arr, samplerate=SAMPLE_RATE)
@@ -118,32 +114,14 @@ def calibrate_audio_threshold(cfg: DictConfig) -> int:
         The calibrated audio threshold.
     """
     chunk_size = int(SAMPLE_RATE * cfg.num_seconds_per_chunk)
-    num_chunks_in_five_seconds = int(5 / cfg.num_seconds_per_chunk)
 
     logger.info("Calibrating audio threshold...")
     sleep(3)
 
-    logger.info("Please be quiet in 3...")
-    sleep(1)
-    logger.info("2...")
-    sleep(1)
-    logger.info("1...")
-    sleep(1)
-    logger.info("Quiet!")
-
-    quiet_values: list[int] = list()
-    with record(chunk_size=chunk_size) as recorder:
-        for _ in range(num_chunks_in_five_seconds):
-            frame = np.asarray(recorder.read(), dtype=np.int16)
-            max_value = frame[~np.isnan(frame)].max().astype(int)
-            quiet_values.append(max_value)
-    quiet_value = np.median(a=quiet_values).astype(int)
-    logger.info(f"The median quiet value was {quiet_value}")
-
     logger.info(
         "Here is some text:\n"
-        "'A chatbot is a software application or web interface that is designed to "
-        "mimic human conversation through text or voice interactions.'"
+        "'Mette Frederiksen er en dansk socialdemokratisk politiker. Hun har været "
+        "statsminister siden den 27. juni 2019."
     )
     sleep(3)
     logger.info("Please read the text aloud in 3...")
@@ -156,16 +134,15 @@ def calibrate_audio_threshold(cfg: DictConfig) -> int:
 
     loud_values: list[int] = list()
     with record(chunk_size=chunk_size) as stream:
-        for _ in range(num_chunks_in_five_seconds):
+        for _ in range(int(cfg.calibration_duration / cfg.num_seconds_per_chunk)):
             frame = np.asarray(stream.read(), dtype=np.int16)
             max_value = frame[~np.isnan(frame)].max().astype(int)
             loud_values.append(max_value)
-    loud_value = np.median(a=loud_values).astype(int)
-    logger.info(f"The median loud value was {loud_value}")
 
-    min_audio_threshold = (quiet_value + loud_value) // 2
-    logger.info(f"Calibrated audio threshold: {min_audio_threshold}")
-    return min_audio_threshold
+    audio_threshold = np.percentile(a=loud_values, q=25).astype(int)
+    logger.info(f"Calibrated audio threshold: {audio_threshold}")
+
+    return audio_threshold
 
 
 @contextmanager

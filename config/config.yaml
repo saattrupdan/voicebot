@@ -14,7 +14,7 @@ asr_model_id: alexandrainst/roest-315m
 
 # Speech recording parameters
 num_seconds_per_chunk: 0.08
-calibrate: true
+calibration_duration: 3.0
 audio_threshold: 1000
 max_seconds_silence: 1.0
 max_seconds_audio: 10.0

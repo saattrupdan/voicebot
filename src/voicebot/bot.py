@@ -38,10 +38,10 @@ class VoiceBot:
         )
         self.text_engine = TextEngine(cfg=cfg)
 
-        if self.cfg.calibrate:
-            self.min_audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
+        if cfg.calibrate:
+            self.audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
         else:
-            self.min_audio_threshold = self.cfg.audio_threshold
+            self.audio_threshold = cfg.audio_threshold
 
         logger.info("Loading the speech recognition model...")
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
@@ -67,7 +67,7 @@ class VoiceBot:
         while True:
             speech, audio_start = record_speech(
                 last_response_time=last_response_time,
-                min_audio_threshold=self.min_audio_threshold,
+                audio_threshold=self.audio_threshold,
                 cfg=self.cfg,
             )
             if audio_start is None:
