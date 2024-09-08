@@ -121,7 +121,7 @@ def calibrate_audio_threshold(cfg: DictConfig) -> int:
     logger.info(
         "Here is some text:\n"
         "'Mette Frederiksen er en dansk socialdemokratisk politiker. Hun har været "
-        "statsminister siden den 27. juni 2019."
+        "statsminister siden den 27. juni 2019.'"
     )
     sleep(3)
     logger.info("Please read the text aloud in 3...")
