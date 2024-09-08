@@ -13,7 +13,6 @@ system_prompt: >
 asr_model_id: alexandrainst/roest-315m
 
 # Speech recording parameters
-sample_rate: 16_000
 num_seconds_per_chunk: 0.08
 calibrate: true
 audio_threshold: 1000

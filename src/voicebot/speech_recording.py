@@ -17,6 +17,9 @@ import sounddevice
 logger = logging.getLogger(__name__)
 
 
+SAMPLE_RATE = 16_000
+
+
 # Load the wake word model. This usually produces logs from `onnxruntime`, so we
 # suppress them.
 ort.set_default_logger_severity(3)
@@ -41,7 +44,7 @@ def record_speech(
         Recorded speech, and the time at which the recording started (or None if no
         speech was recorded).
     """
-    chunk_size = int(cfg.sample_rate * cfg.num_seconds_per_chunk)
+    chunk_size = int(SAMPLE_RATE * cfg.num_seconds_per_chunk)
 
     logger.info("Listening for wakeword...")
 
@@ -99,7 +102,7 @@ def record_speech(
     # Play the audio back
     if cfg.play_back_audio:
         logger.info("Playing back the audio...")
-        sounddevice.play(data=audio_arr, samplerate=cfg.sample_rate)
+        sounddevice.play(data=audio_arr, samplerate=SAMPLE_RATE)
 
     return audio_arr, audio_start
 
@@ -114,7 +117,7 @@ def calibrate_audio_threshold(cfg: DictConfig) -> int:
     Returns:
         The calibrated audio threshold.
     """
-    chunk_size = int(cfg.sample_rate * cfg.num_seconds_per_chunk)
+    chunk_size = int(SAMPLE_RATE * cfg.num_seconds_per_chunk)
     num_chunks_in_five_seconds = int(5 / cfg.num_seconds_per_chunk)
 
     logger.info("Calibrating audio threshold...")
