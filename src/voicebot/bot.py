@@ -78,7 +78,12 @@ class VoiceBot:
             if audio_start is None:
                 continue
 
-            text = transcribe_speech(speech=speech, transcriber=self.transcriber)
+            text = transcribe_speech(
+                speech=speech,
+                input_sample_rate=self.cfg.sample_rate,
+                asr_sample_rate=self.cfg.asr_sample_rate,
+                transcriber=self.transcriber,
+            )
             if text:
                 response = self.text_engine.generate_response(
                     prompt=text,

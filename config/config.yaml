@@ -18,15 +18,17 @@ system_prompt: >
 
 # Speech recognition parameters
 asr_model_id: alexandrainst/roest-315m
-sample_rate: 16_000
+asr_sample_rate: 16_000
 
 # Speech recording parameters
+sample_rate: 48_000
 num_seconds_per_chunk: 0.08
 calibrate: true
 audio_threshold: 1000
 max_seconds_silence: 1.0
-max_seconds_audio: 10
-follow_up_max_seconds: 2
+max_seconds_audio: 10.0
+follow_up_max_seconds: 5.0
+play_back_audio: false
 
 # Wake word detection parameters
 wake_word_probability_threshold: 0.5

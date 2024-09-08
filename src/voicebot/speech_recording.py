@@ -114,21 +114,25 @@ def record_speech(
         Recorded speech, and the time at which the recording started (or None if no
         speech was recorded).
     """
-    audio = pyaudio.PyAudio()
-    stream = audio.open(
-        format=pyaudio.paInt16, channels=1, rate=cfg.sample_rate, input=True
-    )
-
-    max_num_silent_frames = cfg.max_seconds_silence // cfg.num_seconds_per_chunk
     chunk_size = int(cfg.sample_rate * cfg.num_seconds_per_chunk)
 
-    logger.info("Listening...")
+    audio = pyaudio.PyAudio()
+    stream = audio.open(
+        format=pyaudio.paInt16,
+        channels=1,
+        rate=cfg.sample_rate,
+        input=True,
+        frames_per_buffer=chunk_size,
+    )
 
-    frames: list[np.ndarray] = list()
-    num_silent_frames: int = 0
+    logger.info("Listening for wakeword...")
+
     has_begun_talking: bool = False
     audio_start = None
-    while num_silent_frames < max_num_silent_frames:
+    num_silent_frames: int = 0
+    frames: list[np.ndarray] = list()
+
+    while num_silent_frames < cfg.max_seconds_silence // cfg.num_seconds_per_chunk:
         # Record a chunk of audio
         chunk = stream.read(num_frames=chunk_size, exception_on_overflow=False)
         frame = np.frombuffer(buffer=chunk, dtype=np.int16)
@@ -173,7 +177,7 @@ def record_speech(
         # too long
         if max_value < min_audio_threshold:
             num_silent_frames += 1
-        elif max_value >= min_audio_threshold:
+        else:
             num_silent_frames = 0
 
     stream.stop_stream()
@@ -181,6 +185,11 @@ def record_speech(
     audio.terminate()
 
     # Concatenate the frames into a single array, and convert the datatype to float32
-    audio = np.concatenate(frames, axis=0).astype(np.float32, order="C") / 32768.0
+    audio_arr = np.concatenate(frames, axis=0).astype(np.float32, order="C") / 32768.0
 
-    return audio, audio_start
+    # Play the audio back
+    if cfg.play_back_audio:
+        logger.info("Playing back the audio...")
+        sounddevice.play(data=audio_arr, samplerate=cfg.sample_rate)
+
+    return audio_arr, audio_start
