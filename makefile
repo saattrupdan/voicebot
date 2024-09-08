@@ -31,18 +31,12 @@ export PATH := ${HOME}/.local/bin:/opt/homebrew/bin:$(PATH)
 # See https://stackoverflow.com/a/75098703 for more information
 export PYTHON_KEYRING_BACKEND := keyring.backends.null.Keyring
 
-# Bug related to installing the `portaudio` package on macOS.
-# See https://stackoverflow.com/a/74665751/3154226 for more information
-export LDFLAGS="-L/opt/homebrew/Cellar/portaudio/19.7.0/lib"
-export CFLAGS="-I/opt/homebrew/Cellar/portaudio/19.7.0/include"
-
 help:
 	@grep -E '^[0-9a-zA-Z_-]+:.*?## .*$$' makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install dependencies
 	@echo "Installing the 'voicebot' project..."
 	@$(MAKE) --quiet install-brew
-	@$(MAKE) --quiet install-portaudio
 	@$(MAKE) --quiet install-pipx
 	@$(MAKE) --quiet install-poetry
 	@$(MAKE) --quiet install-dependencies
@@ -56,12 +50,6 @@ install-brew:
 	@if [ $$(uname) = "Darwin" ] && [ "$(shell which brew)" = "" ]; then \
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
 		echo "Installed Homebrew."; \
-	fi
-
-install-portaudio:
-	@if [ $$(uname) = "Darwin" ]; then \
-		brew install portaudio --HEAD; \
-		echo "Installed portaudio."; \
 	fi
 
 install-pipx:
