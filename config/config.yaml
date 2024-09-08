@@ -2,13 +2,6 @@ defaults:
   - override hydra/job_logging: custom
   - _self_
 
-dirs:
-  data: data
-  raw: raw
-  processed: processed
-  final: final
-  models: models
-
 # Text engine parameters
 text_model_id: gpt-4o-mini
 temperature: 0.3
@@ -18,10 +11,9 @@ system_prompt: >
 
 # Speech recognition parameters
 asr_model_id: alexandrainst/roest-315m
-asr_sample_rate: 16_000
 
 # Speech recording parameters
-sample_rate: 48_000
+sample_rate: 16_000
 num_seconds_per_chunk: 0.08
 calibrate: true
 audio_threshold: 1000
