@@ -2,16 +2,6 @@ defaults:
   - override hydra/job_logging: custom
   - _self_
 
-# Text engine parameters
-text_model_id: gpt-4o-mini
-temperature: 0.3
-system_prompt: >
-  Du hedder Jarvis og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
-  er altid super korte og præcise.
-
-# Speech recognition parameters
-asr_model_id: alexandrainst/roest-315m
-
 # Speech recording parameters
 num_seconds_per_chunk: 0.08
 calibrate: true
@@ -24,3 +14,13 @@ play_back_audio: false
 
 # Wake word detection parameters
 wake_word_probability_threshold: 0.5
+
+# Speech recognition parameters
+asr_model_id: alexandrainst/roest-315m
+
+# Text engine parameters
+text_model_id: gpt-4o-mini
+temperature: 0.3
+system_prompt: >
+  Du hedder Jarvis og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
+  er altid super korte og præcise.
