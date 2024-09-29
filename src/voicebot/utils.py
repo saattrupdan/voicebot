@@ -1,6 +1,5 @@
 """Utility functions for the project."""
 
-import datetime as dt
 import os
 
 import geocoder
@@ -59,8 +58,6 @@ def get_weather_forecast(location: str) -> str:
     Returns:
         The weather forecast for today.
     """
-    current_hour = dt.datetime.now().hour
-
     coordinates = geocoder.geonames(
         location=location, api_key=os.getenv("GEONAMES_USERNAME")
     ).json
@@ -76,7 +73,7 @@ def get_weather_forecast(location: str) -> str:
                 "precipitation",
                 "wind_speed_10m",
             ],
-            forecast_hours=24 - current_hour,
+            forecast_days=2,
         ),
     )[0].Hourly()
     if response is None:
@@ -89,7 +86,7 @@ def get_weather_forecast(location: str) -> str:
         "Vindhastighed (i meter per sekund)": response.Variables(3),
     }
 
-    out = f"Vejrudsigten for {location}:\n\n"
+    out = f"DMI vejrdata for {location}:\n\n"
     for variable_name, variable in forecast.items():
         out += f"{variable_name}:\n"
         if variable is None:
@@ -100,7 +97,8 @@ def get_weather_forecast(location: str) -> str:
         for i, value in enumerate(values):
             if variable_name == "Vejr":
                 value = WEATHER_CODES.get(value, "Ukendt vejr")
-            out += f"Kl. {(current_hour + i) % 24}: {value}\n"
+            day = "I dag" if i % 24 == 0 else "I morgen"
+            out += f"{day} kl. {i % 24}: {value}\n"
         out += "\n"
 
     return out

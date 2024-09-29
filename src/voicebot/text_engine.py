@@ -3,7 +3,6 @@
 import datetime as dt
 import logging
 import os
-import re
 
 import openai
 from dotenv import load_dotenv
@@ -36,6 +35,7 @@ class TextEngine:
             api_key=os.getenv("OPENAI_API_KEY"), base_url=cfg.server
         )
         self.conversation: list[ChatCompletionMessageParam] = list()
+        self.weather_forecast = get_weather_forecast(location="Copenhagen")
 
     def generate_response(
         self,
@@ -56,21 +56,9 @@ class TextEngine:
         Returns:
             Generated response, or None if prompt should not be responded to.
         """
-        if len(prompt.strip()) <= 1:
+        if len(prompt.strip()) <= 10:
             logger.info("The prompt is too short, ignoring it.")
             return None
-
-        weather_regex = re.compile(
-            pattern=rf"\b({self.cfg.weather_keywords})\b", flags=re.IGNORECASE
-        )
-        mentions_weather = re.search(pattern=weather_regex, string=prompt)
-        if mentions_weather:
-            weather_forecast = get_weather_forecast(location="Copenhagen")
-            prompt = f"{weather_forecast}\n\n{prompt}"
-            logger.info(
-                "Mentioned weather, appending the weather forecast: "
-                f"{weather_forecast!r}"
-            )
 
         response_delay = current_response_time - last_response_time
         seconds_since_last_response = response_delay.total_seconds()
@@ -78,6 +66,7 @@ class TextEngine:
             system_prompt = self.cfg.system_prompt.strip().format(
                 date=dt.datetime.now().strftime("%d %B %Y"),
                 time=dt.datetime.now().strftime("%H:%M"),
+                weather_forecast=self.weather_forecast,
             )
             self.conversation = [
                 ChatCompletionSystemMessageParam(role="system", content=system_prompt)
