@@ -16,7 +16,7 @@ play_back_audio: false
 wake_word_probability_threshold: 0.5
 
 # Speech recognition parameters
-asr_model_id: alexandrainst/roest-315m-with-danish-radio-data
+asr_model_id: alexandrainst/roest-315m
 
 # Text engine parameters
 server: http://localhost:1234/v1
