@@ -31,6 +31,3 @@ system_prompt: >
   {weather_forecast}
 
   Når du giver en vejrudsigt snakker du aldrig i datid.
-
-# Weather parameters
-location: Copenhagen

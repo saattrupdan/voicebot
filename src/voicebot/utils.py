@@ -49,12 +49,13 @@ WEATHER_CODES = {
 }
 
 
-def get_weather_forecast(location: str) -> str:
+def get_weather_forecast(location: str | None = None) -> str:
     """Get the weather forecast for today.
 
     Args:
         location:
-            The location to get the weather forecast for.
+            The location to get the weather forecast for. Can be None to use the
+            current IP location.
 
     Returns:
         The weather forecast for today.
@@ -62,9 +63,13 @@ def get_weather_forecast(location: str) -> str:
     if not is_internet_available():
         return "Ingen vejrudsigt, da internettet ikke er tilgængeligt."
 
+    if location is None:
+        location = geocoder.ip("me").address
+
     coordinates = geocoder.geonames(
         location=location, api_key=os.getenv("GEONAMES_USERNAME")
     ).json
+
     response = openmeteo.weather_api(
         url="https://api.open-meteo.com/v1/forecast",
         params=dict(

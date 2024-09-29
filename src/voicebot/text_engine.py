@@ -35,7 +35,7 @@ class TextEngine:
             api_key=os.getenv("OPENAI_API_KEY"), base_url=cfg.server
         )
         self.conversation: list[ChatCompletionMessageParam] = list()
-        self.weather_forecast = get_weather_forecast(location=cfg.location)
+        self.weather_forecast = get_weather_forecast()
 
     def generate_response(
         self,
