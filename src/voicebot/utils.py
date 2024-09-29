@@ -115,7 +115,7 @@ def is_internet_available() -> bool:
         True if the internet is available, False otherwise.
     """
     try:
-        requests.get(url="https://www.google.com", timeout=1)
+        requests.get(url="https://www.google.com", timeout=5)
         return True
-    except requests.ConnectionError:
+    except requests.exceptions.RequestException:
         return False
