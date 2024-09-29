@@ -89,7 +89,7 @@ def get_weather_forecast(location: str) -> str:
         "Vindhastighed (i meter per sekund)": response.Variables(3),
     }
 
-    out = f"Vejrudsigten for {location} de næste 24 timer:\n\n"
+    out = f"Vejrudsigten for {location}:\n\n"
     for variable_name, variable in forecast.items():
         out += f"{variable_name}:\n"
         if variable is None:

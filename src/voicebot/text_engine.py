@@ -75,10 +75,12 @@ class TextEngine:
         response_delay = current_response_time - last_response_time
         seconds_since_last_response = response_delay.total_seconds()
         if seconds_since_last_response > self.cfg.follow_up_max_seconds:
+            system_prompt = self.cfg.system_prompt.strip().format(
+                date=dt.datetime.now().strftime("%d %B %Y"),
+                time=dt.datetime.now().strftime("%H:%M"),
+            )
             self.conversation = [
-                ChatCompletionSystemMessageParam(
-                    role="system", content=self.cfg.system_prompt.strip()
-                )
+                ChatCompletionSystemMessageParam(role="system", content=system_prompt)
             ]
 
         self.conversation.append(
