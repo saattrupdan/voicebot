@@ -33,19 +33,22 @@ class VoiceBot:
         """
         self.cfg = cfg
         hf_logging.set_verbosity_error()
-        self.wake_word_model = oww.Model(
-            wakeword_models=["hey_jarvis"], inference_framework="onnx"
-        )
-        self.text_engine = TextEngine(cfg=cfg)
 
         if cfg.calibrate:
             self.audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
         else:
             self.audio_threshold = cfg.audio_threshold
 
+        logger.info("Loading the wake word model...")
+        self.wake_word_model = oww.Model(
+            wakeword_models=["hey_jarvis"], inference_framework="onnx"
+        )
+
         logger.info("Loading the speech recognition model...")
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
-            model=self.cfg.asr_model_id, device=self.device
+            model=self.cfg.asr_model_id,
+            device=self.device,
+            task="automatic-speech-recognition",
         )
 
         # Sanity check that the processor is of the correct type
@@ -54,6 +57,9 @@ class VoiceBot:
             "Expected the processor to be of type Wav2Vec2ProcessorWithLM, but got "
             f"{processor_class}."
         )
+
+        logger.info("Loading the text engine model...")
+        self.text_engine = TextEngine(cfg=self.cfg)
 
     @property
     def device(self) -> str:

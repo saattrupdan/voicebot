@@ -7,7 +7,7 @@ num_seconds_per_chunk: 0.08
 calibrate: true
 calibration_duration: 3.0
 audio_threshold: 1000
-max_seconds_silence: 1.0
+max_seconds_silence: 2.0
 max_seconds_audio: 10.0
 follow_up_max_seconds: 5.0
 play_back_audio: false
@@ -19,8 +19,9 @@ wake_word_probability_threshold: 0.5
 asr_model_id: alexandrainst/roest-315m
 
 # Text engine parameters
-text_model_id: gpt-4o-mini
+server: http://localhost:1234/v1
+text_model_id: lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF
 temperature: 0.3
 system_prompt: >
   Du hedder Jarvis og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
-  er altid super korte og præcise.
+  er altid super korte og præcise. Du bruger aldrig lister. Du svarer altid på dansk.

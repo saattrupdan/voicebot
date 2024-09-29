@@ -7,6 +7,12 @@ import os
 import openai
 from dotenv import load_dotenv
 from omegaconf import DictConfig
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -23,13 +29,10 @@ class TextEngine:
                 The Hydra configuration.
         """
         self.cfg = cfg
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-
-    def reset_conversation(self) -> None:
-        """Reset the conversation, only keeping the system prompt."""
-        self.conversation = [
-            dict(role="system", content=self.cfg.system_prompt.strip())
-        ]
+        self.client = openai.OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"), base_url=cfg.server
+        )
+        self.conversation: list[ChatCompletionMessageParam] = list()
 
     def generate_response(
         self,
@@ -47,18 +50,35 @@ class TextEngine:
         Returns:
             Generated response, or None if prompt should not be responded to.
         """
+        if len(prompt.strip()) <= 1:
+            logger.info("The prompt is too short, ignoring it.")
+            return None
+
         response_delay = current_response_time - last_response_time
         seconds_since_last_response = response_delay.total_seconds()
         if seconds_since_last_response > self.cfg.follow_up_max_seconds:
-            self.reset_conversation()
+            self.conversation = [
+                ChatCompletionSystemMessageParam(
+                    role="system", content=self.cfg.system_prompt.strip()
+                )
+            ]
 
-        self.conversation.append(dict(role="user", content=prompt))
-        llm_answer = openai.chat.completions.create(
+        self.conversation.append(
+            ChatCompletionUserMessageParam(role="user", content=prompt)
+        )
+        llm_answer = self.client.chat.completions.create(
             model=self.cfg.text_model_id,
             messages=self.conversation,
             temperature=self.cfg.temperature,
         )
-        response: str = llm_answer.choices[0].message.content.strip()
-        self.conversation.append(dict(role="assistant", content=response))
+        response = llm_answer.choices[0].message.content
+        if response is None:
+            logger.info("The response is empty, ignoring it.")
+            return None
+        response = response.strip()
+
+        self.conversation.append(
+            ChatCompletionAssistantMessageParam(role="assistant", content=response)
+        )
         logger.info(f"Generated the response: {response!r}")
         return response
