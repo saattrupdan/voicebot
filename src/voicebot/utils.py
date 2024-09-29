@@ -4,6 +4,7 @@ import os
 
 import geocoder
 import numpy as np
+import requests
 import requests_cache
 from openmeteo_requests import Client
 from retry_requests import retry
@@ -58,6 +59,9 @@ def get_weather_forecast(location: str) -> str:
     Returns:
         The weather forecast for today.
     """
+    if not is_internet_available():
+        return "Ingen vejrudsigt, da internettet ikke er tilgængeligt."
+
     coordinates = geocoder.geonames(
         location=location, api_key=os.getenv("GEONAMES_USERNAME")
     ).json
@@ -102,3 +106,16 @@ def get_weather_forecast(location: str) -> str:
         out += "\n"
 
     return out
+
+
+def is_internet_available() -> bool:
+    """Check if the internet is available.
+
+    Returns:
+        True if the internet is available, False otherwise.
+    """
+    try:
+        requests.get(url="https://www.google.com", timeout=1)
+        return True
+    except requests.ConnectionError:
+        return False
