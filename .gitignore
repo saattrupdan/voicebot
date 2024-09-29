@@ -123,3 +123,5 @@ models/*
 .temp.mp3
 .cache
 .cache.sqlite
+
+node_modules/
