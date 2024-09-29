@@ -3,6 +3,7 @@
 import datetime as dt
 import logging
 import os
+import re
 
 import openai
 from dotenv import load_dotenv
@@ -13,6 +14,8 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
+
+from .utils import get_weather_forecast
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -43,9 +46,12 @@ class TextEngine:
         """Generate a new response from a prompt.
 
         Args:
-            prompt: Prompt to generate a response from.
-            last_response_time: Time of the last response.
-            current_response_time: Time of the current response.
+            prompt:
+                Prompt to generate a response from.
+            last_response_time:
+                Time of the last response.
+            current_response_time:
+                Time of the current response.
 
         Returns:
             Generated response, or None if prompt should not be responded to.
@@ -53,6 +59,17 @@ class TextEngine:
         if len(prompt.strip()) <= 1:
             logger.info("The prompt is too short, ignoring it.")
             return None
+
+        mentions_weather = re.search(
+            pattern=r"\b(vejret|været|erhvervet)\b", string=prompt, flags=re.IGNORECASE
+        )
+        if mentions_weather:
+            weather_forecast = get_weather_forecast(location="Copenhagen")
+            prompt = f"{weather_forecast}\n\n{prompt}"
+            logger.info(
+                "Mentioned weather, appending the weather forecast: "
+                f"{weather_forecast!r}"
+            )
 
         response_delay = current_response_time - last_response_time
         seconds_since_last_response = response_delay.total_seconds()

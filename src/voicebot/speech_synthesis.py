@@ -28,6 +28,8 @@ def synthesise_speech(
             `macos` (built-in `say` TTS on MacOS devices) or `auto`, to use `macos` if
             it is available and `gtts` otherwise.
     """
+    text = text.replace("m/s", "metersekunder")
+
     if engine == "auto":
         macos_available = Path("/usr/bin/say").exists()
         engine = "macos" if macos_available else "gtts"

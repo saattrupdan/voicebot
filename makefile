@@ -123,3 +123,6 @@ format:  ## Format the project
 
 type-check:  ## Type-check the project
 	@poetry run mypy . --install-types --non-interactive --ignore-missing-imports --show-error-codes --check-untyped-defs
+
+voicebot:  ## Start the voice bot
+	@poetry run python src/scripts/run_bot.py

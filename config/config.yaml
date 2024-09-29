@@ -4,7 +4,7 @@ defaults:
 
 # Speech recording parameters
 num_seconds_per_chunk: 0.08
-calibrate: true
+calibrate: false
 calibration_duration: 3.0
 audio_threshold: 1000
 max_seconds_silence: 2.0
