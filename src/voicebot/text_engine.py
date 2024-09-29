@@ -60,9 +60,10 @@ class TextEngine:
             logger.info("The prompt is too short, ignoring it.")
             return None
 
-        mentions_weather = re.search(
-            pattern=r"\b(vejret|været|erhvervet)\b", string=prompt, flags=re.IGNORECASE
+        weather_regex = re.compile(
+            pattern=rf"\b({self.cfg.weather_keywords})\b", flags=re.IGNORECASE
         )
+        mentions_weather = re.search(pattern=weather_regex, string=prompt)
         if mentions_weather:
             weather_forecast = get_weather_forecast(location="Copenhagen")
             prompt = f"{weather_forecast}\n\n{prompt}"
