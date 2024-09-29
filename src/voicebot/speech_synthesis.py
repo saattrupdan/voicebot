@@ -1,7 +1,9 @@
 """Generation of Danish speech."""
 
+import os
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 import nltk
 from gtts import gTTS
@@ -13,23 +15,38 @@ from pydub.playback import play
 nltk.download("punkt_tab", quiet=True)
 
 
-def synthesise_speech(text: str) -> None:
+def synthesise_speech(
+    text: str, engine: Literal["gtts", "macos", "auto"] = "auto"
+) -> None:
     """Synthesise speech from text.
 
     Args:
-        text: Text to be spoken.
+        text:
+            Text to be spoken.
+        engine:
+            The TTS engine to use. Can be `gtts` (Google Translate's text-to-speech),
+            `macos` (built-in `say` TTS on MacOS devices) or `auto`, to use `macos` if
+            it is available and `gtts` otherwise.
     """
-    tts = gTTS(
-        text=text,
-        tld="dk",
-        lang="da",
-        lang_check=False,
-        tokenizer_func=partial(sent_tokenize, language="danish"),
-    )
-    output_path = Path(".temp.mp3")
-    tts.save(savefile=output_path)
-    play_sound(path=output_path)
-    output_path.unlink()
+    if engine == "auto":
+        macos_available = Path("/usr/bin/say").exists()
+        engine = "macos" if macos_available else "gtts"
+
+    match engine:
+        case "macos":
+            os.system(f'say "{text}"')
+        case "gtts":
+            tts = gTTS(
+                text=text,
+                tld="dk",
+                lang="da",
+                lang_check=False,
+                tokenizer_func=partial(sent_tokenize, language="danish"),
+            )
+            output_path = Path(".temp.mp3")
+            tts.save(savefile=output_path)
+            play_sound(path=output_path)
+            output_path.unlink()
 
 
 def play_sound(path: str | Path) -> None:
