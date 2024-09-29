@@ -84,7 +84,7 @@ def get_weather_forecast(location: str) -> str:
         return "Ingen vejrudsigt tilgængelig."
 
     forecast = {
-        "Vejr": response.Variables(0),
+        "Vejrtype": response.Variables(0),
         "Temperatur (i celcius)": response.Variables(1),
         "Nedbør (i millimeter)": response.Variables(2),
         "Vindhastighed (i meter per sekund)": response.Variables(3),
