@@ -14,6 +14,8 @@ from omegaconf import DictConfig
 from pvrecorder import PvRecorder
 import sounddevice
 
+from .speech_synthesis import synthesise_speech
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,7 @@ def record_speech(
         Recorded speech, and the time at which the recording started (or None if no
         speech was recorded).
     """
+    rng = np.random.default_rng()
     chunk_size = int(SAMPLE_RATE * cfg.num_seconds_per_chunk)
 
     logger.info("Listening for wakeword...")
@@ -51,12 +54,16 @@ def record_speech(
     has_begun_talking: bool = False
     audio_start: dt.datetime | None = None
     num_silent_frames: int = 0
+    frames_left_to_ignore: int = 0
     frames: list[np.ndarray] = list()
 
     with record(chunk_size=chunk_size) as recorder:
         while num_silent_frames < cfg.max_seconds_silence // cfg.num_seconds_per_chunk:
             frame = np.asarray(recorder.read(), dtype=np.int16)
             max_value = frame[~np.isnan(frame)].max()
+            if frames_left_to_ignore > 0:
+                frames_left_to_ignore -= 1
+                continue
 
             if not has_begun_talking:
                 # Check if it hasn't been too long since the last response
@@ -72,17 +79,20 @@ def record_speech(
                         wake_word_model.reset()
                         continue
 
-                # Check if the wake_word is triggered and that we haven't already started
-                # recording
+                # Check if the wake_word is triggered
                 wake_word_prediction_dict = wake_word_model.predict(x=frame)
                 assert isinstance(wake_word_prediction_dict, dict)
                 wake_word_probability = wake_word_prediction_dict["hey_jarvis"]
                 if wake_word_probability >= cfg.wake_word_probability_threshold:
                     logger.info("Wakeword detected!")
+                    wake_word_response = rng.choice(cfg.wake_word_responses)
+                    synthesise_speech(text=wake_word_response)
+                    frames_left_to_ignore = (
+                        cfg.wake_word_seconds // cfg.num_seconds_per_chunk
+                    )
                     audio_start = dt.datetime.now()
                     has_begun_talking = True
                     num_silent_frames = 0
-                    frames.append(frame)
                     wake_word_model.reset()
             else:
                 frames.append(frame)

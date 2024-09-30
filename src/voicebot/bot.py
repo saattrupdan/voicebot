@@ -79,7 +79,11 @@ class VoiceBot:
             if audio_start is None:
                 continue
 
-            text = transcribe_speech(speech=speech, transcriber=self.transcriber)
+            text = transcribe_speech(
+                speech=speech,
+                transcriber=self.transcriber,
+                manual_fixes=self.cfg.manual_fixes,
+            )
             if text:
                 response = self.text_engine.generate_response(
                     prompt=text,

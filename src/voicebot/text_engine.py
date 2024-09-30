@@ -56,7 +56,7 @@ class TextEngine:
         Returns:
             Generated response, or None if prompt should not be responded to.
         """
-        if len(prompt.strip()) <= 10:
+        if len(prompt.strip()) <= self.cfg.min_prompt_length:
             logger.info("The prompt is too short, ignoring it.")
             return None
 
@@ -85,6 +85,10 @@ class TextEngine:
             logger.info("The response is empty, ignoring it.")
             return None
         response = response.strip()
+
+        # Fix some consistent typos
+        for before, after in self.cfg.manual_fixes.items():
+            response = response.replace(before, after)
 
         self.conversation.append(
             ChatCompletionAssistantMessageParam(role="assistant", content=response)

@@ -11,7 +11,9 @@ logging.getLogger("torch._dynamo.output_graph").setLevel(logging.CRITICAL)
 
 
 def transcribe_speech(
-    speech: np.ndarray, transcriber: AutomaticSpeechRecognitionPipeline
+    speech: np.ndarray,
+    transcriber: AutomaticSpeechRecognitionPipeline,
+    manual_fixes: dict[str, str],
 ) -> str:
     """Transcribe speech.
 
@@ -20,6 +22,8 @@ def transcribe_speech(
             Speech to transcribe.
         transcriber:
             Pipeline for automatic speech recognition.
+        manual_fixes:
+            Manual fixes for the transcription output.
 
     Returns:
         Transcribed speech.
@@ -29,5 +33,7 @@ def transcribe_speech(
         transcription_dict = transcriber(inputs=speech)
         assert isinstance(transcription_dict, dict)
         transcription = transcription_dict["text"]
+    for before, after in manual_fixes.items():
+        transcription = transcription.replace(before, after)
     logger.info(f"Heard the following: {transcription!r}")
     return transcription
