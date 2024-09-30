@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 # Speech recording parameters
+starting_phrase: Hej, så er jeg klar til at lytte. Sig 'Hey Jarvis' for at starte.
 num_seconds_per_chunk: 0.08
 calibrate: false
 calibration_duration: 3.0
@@ -32,9 +33,12 @@ temperature: 0.3
 min_prompt_length: 5
 system_prompt: >
   Du hedder Jarvis og er en dansk stemmerobot. Du er sød, rar og hjælpsom, og dine svar
-  er altid super korte og præcise. Du bruger aldrig lister. Du svarer altid på dansk.
+  er altid meget korte og præcise. Du bruger aldrig lister. Du svarer altid på dansk.
 
   I dag er {date} og klokken er {time}, men det behøver du ikke at sige.
+
+  Du er i stand til at svare på spørgsmål om hvad som helst, og derudover kan du også
+  give vejrudsigten for i dag og i morgen.
 
   {weather_forecast}
 
