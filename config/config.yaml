@@ -20,7 +20,6 @@ wake_word_responses:
   - Hmm?
   - Halløjsa
   - Halløj
-  - Dav dav
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
@@ -40,11 +39,11 @@ system_prompt: >
   {weather_forecast}
 
   En vejrudsigt består af en kort beskrivelse af vejret, maksimum og minimum
-  temperatur, om det kommer til at regne, og om det bliver blæsevejr. Når du giver en
-  vejrudsigt snakker du aldrig i datid.
+  temperatur, vindhastigheden, og om det kommer til at regne.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:
+  hvor den: hvordan
   solig: solrig
   blev været: bliver vejret
   bliver været: bliver vejret
