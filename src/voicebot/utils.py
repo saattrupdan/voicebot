@@ -67,7 +67,7 @@ def get_weather_forecast(location: str | None = None) -> str:
         location = geocoder.ip("me").address
 
     coordinates = geocoder.geonames(
-        location=location, api_key=os.getenv("GEONAMES_USERNAME")
+        location=location, key=os.getenv("GEONAMES_USERNAME")
     ).json
 
     response = openmeteo.weather_api(
