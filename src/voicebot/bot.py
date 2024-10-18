@@ -53,7 +53,12 @@ class VoiceBot:
     @property
     def device(self) -> str:
         """Return the device on which the bot is running."""
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
 
     def run(self) -> None:
         """Run the bot."""
