@@ -39,8 +39,8 @@ system_prompt: >
   En vejrudsigt består af en kort beskrivelse af vejret, maksimum og minimum
   temperatur, vindhastigheden, og om det kommer til at regne.
 
-  I dag er {date} og klokken er {time} (i 24-timers format), men det behøver du ikke at
-  sige.
+  I dag er {weekday} den {day}. {month} {year} og klokken er {time} (i 24-timers
+  format), men det behøver du ikke at sige.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

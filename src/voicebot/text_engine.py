@@ -14,7 +14,8 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
 )
 
-from .utils import get_weather_forecast
+from .utils import MONTHS, WEEKDAYS
+from .weather import get_weather_forecast
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -64,7 +65,10 @@ class TextEngine:
         seconds_since_last_response = response_delay.total_seconds()
         if seconds_since_last_response > self.cfg.follow_up_max_seconds:
             system_prompt = self.cfg.system_prompt.strip().format(
-                date=dt.datetime.now().strftime("%d %B %Y"),
+                weekday=WEEKDAYS[dt.datetime.now().weekday()],
+                day=dt.datetime.now().day,
+                month=MONTHS[dt.datetime.now().month - 1],
+                year=dt.datetime.now().year,
                 time=dt.datetime.now().strftime("%H:%M"),
                 weather_forecast=self.weather_forecast,
             )
