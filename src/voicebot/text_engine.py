@@ -14,8 +14,8 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
 )
 
+from .skills.weather import get_weather_forecast
 from .utils import MONTHS, WEEKDAYS
-from .weather import get_weather_forecast
 
 load_dotenv()
 logger = logging.getLogger(__name__)

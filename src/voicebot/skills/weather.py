@@ -8,7 +8,7 @@ import requests_cache
 from openmeteo_requests import Client
 from retry_requests import retry
 
-from .utils import is_internet_available
+from ..utils import is_internet_available
 
 openmeteo = Client(
     session=retry(
@@ -96,19 +96,31 @@ def get_weather_forecast(location: str | None = None) -> str:
         "Vindhastighed (i meter per sekund)": response.Variables(3),
     }
 
-    out = f"DMI vejrdata for {location}:\n\n"
+    out = f"Vejrdata for {location}:\n\n"
     for variable_name, variable in forecast.items():
         out += f"{variable_name}:\n"
         if variable is None:
             out += "Ingen data tilgængelig.\n\n"
             continue
-        values = variable.ValuesAsNumpy()
-        assert isinstance(values, np.ndarray), "Values should be a numpy array."
-        for i, value in enumerate(values):
-            if variable_name == "Vejr":
-                value = WEATHER_CODES.get(value, "Ukendt vejr")
-            day = "I dag" if i % 24 == 0 else "I morgen"
-            out += f"{day} kl. {i % 24}: {value}\n"
+
+        values_arr = variable.ValuesAsNumpy()
+        assert isinstance(values_arr, np.ndarray), "Values should be a NumPy array."
+
+        if variable_name == "Vejrtype":
+            values = [WEATHER_CODES.get(value, "Ukendt vejr") for value in values_arr]
+        else:
+            values = [str(int(round(value, 0))) for value in values_arr]
+
+        intervals = {
+            "I dag kl. 1-12": (0, 12),
+            "I dag kl. 13-24": (12, 24),
+            "I morgen kl. 1-12": (24, 36),
+            "I morgen kl. 13-24": (36, 48),
+        }
+        for interval_name, (start, end) in intervals.items():
+            interval_values = ", ".join(str(value) for value in values[start:end])
+            out += f"{interval_name}: {interval_values}\n"
         out += "\n"
 
+    print(out)  # TEMP
     return out
