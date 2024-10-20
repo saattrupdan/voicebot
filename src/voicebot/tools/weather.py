@@ -1,22 +1,23 @@
 """Weather-related functions."""
 
+import logging
 import os
+from typing import Literal
 
 import geocoder
 import numpy as np
 import requests_cache
 from openmeteo_requests import Client
+from pydantic import BaseModel
 from retry_requests import retry
 
 from ..utils import is_internet_available
 
-openmeteo = Client(
-    session=retry(
-        session=requests_cache.CachedSession(".cache", expire_after=3600),
-        retries=5,
-        backoff_factor=0.2,
-    )
-)
+logging.getLogger("geocoder.base").setLevel(logging.WARNING)
+
+
+logger = logging.getLogger(__name__)
+
 
 WEATHER_CODES = {
     0: "Klar himmel",
@@ -50,7 +51,7 @@ WEATHER_CODES = {
 }
 
 
-def get_weather_forecast(location: str | None = None) -> str:
+def get_weather(location: str | None = None) -> str:
     """Get the weather forecast for today.
 
     Args:
@@ -66,6 +67,17 @@ def get_weather_forecast(location: str | None = None) -> str:
 
     if location is None:
         location = geocoder.ip("me").address
+        logger.info(
+            f"No location provided, using the current IP location: {location!r}"
+        )
+
+    openmeteo = Client(
+        session=retry(
+            session=requests_cache.CachedSession(".cache", expire_after=3600),
+            retries=5,
+            backoff_factor=0.2,
+        )
+    )
 
     coordinates = geocoder.geonames(
         location=location, key=os.getenv("GEONAMES_USERNAME")
@@ -122,5 +134,17 @@ def get_weather_forecast(location: str | None = None) -> str:
             out += f"{interval_name}: {interval_values}\n"
         out += "\n"
 
-    print(out)  # TEMP
     return out
+
+
+class GetWeatherParameters(BaseModel):
+    """The parameters for the get_weather function."""
+
+    location: str | None
+
+
+class GetWeatherResponse(BaseModel):
+    """A response containing the weather forecast."""
+
+    name: Literal["get_weather"]
+    parameters: GetWeatherParameters

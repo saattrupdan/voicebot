@@ -40,15 +40,15 @@ class VoiceBot:
             wakeword_models=["hey_jarvis"], inference_framework="onnx"
         )
 
+        logger.info("Loading the text engine model...")
+        self.text_engine = TextEngine(cfg=self.cfg)
+
         logger.info("Loading the speech recognition model...")
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
             model=self.cfg.asr_model_id,
             device=self.device,
             task="automatic-speech-recognition",
         )
-
-        logger.info("Loading the text engine model...")
-        self.text_engine = TextEngine(cfg=self.cfg)
 
     @property
     def device(self) -> str:

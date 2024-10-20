@@ -1,12 +1,13 @@
 """The engine that produces new responses."""
 
 import datetime as dt
+import json
 import logging
 import os
 
 import openai
 from dotenv import load_dotenv
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionMessageParam,
@@ -14,7 +15,8 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
 )
 
-from .skills.weather import get_weather_forecast
+from . import tools
+from .tools import LLMResponse, NoFunctionCallResponse
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
@@ -36,7 +38,27 @@ class TextEngine:
             api_key=os.getenv("OPENAI_API_KEY"), base_url=cfg.server
         )
         self.conversation: list[ChatCompletionMessageParam] = list()
-        self.weather_forecast = get_weather_forecast()
+        self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)
+        # self.tools.append(dict(
+        #     type="function",
+        #     function={
+        #         "name": "answer_other_questions",
+        #         "description": "Answer any other questions that are not covered by the other functions.",
+        #         "parameters": dict(
+        #             type="object",
+        #             properties=dict(
+        #                 question=dict(
+        #                     type="string",
+        #                     description="The question to answer."
+        #                 )
+        #             )
+        #         ),
+        #         "return": dict(
+        #             type="string",
+        #             description="The answer to the question."
+        #         )
+        #     },
+        # ))
 
     def generate_response(
         self,
@@ -61,6 +83,8 @@ class TextEngine:
             logger.info("The prompt is too short, ignoring it.")
             return None
 
+        logger.info(f"Generating a response from the prompt: {prompt!r}...")
+
         response_delay = current_response_time - last_response_time
         seconds_since_last_response = response_delay.total_seconds()
         if seconds_since_last_response > self.cfg.follow_up_max_seconds:
@@ -70,7 +94,7 @@ class TextEngine:
                 month=MONTHS[dt.datetime.now().month - 1],
                 year=dt.datetime.now().year,
                 time=dt.datetime.now().strftime("%H:%M"),
-                weather_forecast=self.weather_forecast,
+                tools="\n".join([json.dumps(tool, indent=4) for tool in self.tools]),
             )
             self.conversation = [
                 ChatCompletionSystemMessageParam(role="system", content=system_prompt)
@@ -79,16 +103,63 @@ class TextEngine:
         self.conversation.append(
             ChatCompletionUserMessageParam(role="user", content=prompt)
         )
-        llm_answer = self.client.chat.completions.create(
+
+        llm_answer = self.client.beta.chat.completions.parse(
             model=self.cfg.text_model_id,
             messages=self.conversation,
             temperature=self.cfg.temperature,
+            response_format=LLMResponse,
         )
-        response = llm_answer.choices[0].message.content
-        if response is None:
+        response_or_null = llm_answer.choices[0].message.parsed
+        if response_or_null is None:
             logger.info("The response is empty, ignoring it.")
             return None
-        response = response.strip()
+        response_obj = response_or_null.response
+
+        if isinstance(response_obj, NoFunctionCallResponse):
+            response = response_obj.answer
+        else:
+            function_name = response_obj.name
+            function_parameters = response_obj.parameters.model_dump()
+
+            logger.info(
+                f"Using the tool {function_name!r} with parameters "
+                f"{function_parameters!r}..."
+            )
+
+            tool_response = getattr(tools, function_name)(**function_parameters)
+            self.conversation.extend(
+                [
+                    ChatCompletionAssistantMessageParam(
+                        role="assistant",
+                        content=f"I want to call the {function_name!r} function with "
+                        f"the parameters {function_parameters!r}.",
+                    ),
+                    ChatCompletionUserMessageParam(
+                        role="user",
+                        content=f"The response from the {function_name!r} function is "
+                        f"{tool_response!r}. Now answer the query as "
+                        '{"response": {"answer": your answer}}.',
+                    ),
+                ]
+            )
+            llm_answer = self.client.beta.chat.completions.parse(
+                model=self.cfg.text_model_id,
+                messages=self.conversation,
+                temperature=self.cfg.temperature,
+                response_format=LLMResponse,
+            )
+            response_or_null = llm_answer.choices[0].message.parsed
+            if response_or_null is None:
+                logger.info("The response is empty, ignoring it.")
+                return None
+            response_obj = response_or_null.response
+            if not isinstance(response_obj, NoFunctionCallResponse):
+                logger.error(
+                    "The response after using a tool is not a NoFunctionCallResponse."
+                )
+                return None
+            response = response_obj.answer
 
         # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():
