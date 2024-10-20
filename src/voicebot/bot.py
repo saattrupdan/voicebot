@@ -64,6 +64,7 @@ class VoiceBot:
         """Run the bot."""
         last_response_time = dt.datetime(year=1900, month=1, day=1)
 
+        logger.info("Playing welcome message...")
         synthesise_speech(text=self.cfg.starting_phrase)
 
         while True:
