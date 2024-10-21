@@ -76,7 +76,6 @@ class TextEngine:
                 year=dt.datetime.now().year,
                 time=dt.datetime.now().strftime("%H:%M"),
                 tools="\n".join([json.dumps(tool, indent=4) for tool in self.tools]),
-                state=str(self.state),
             )
             self.conversation = [
                 ChatCompletionSystemMessageParam(role="system", content=system_prompt)

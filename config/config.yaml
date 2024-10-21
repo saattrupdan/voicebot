@@ -58,8 +58,6 @@ system_prompt: >
   {{
     "answer": your answer to the query
   }}
-
-  Your internal state is {state}.
 tools:
   - type: function
     function:
