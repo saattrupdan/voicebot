@@ -43,6 +43,34 @@ class VoiceBot:
         logger.info("Loading the text engine model...")
         self.text_engine = TextEngine(cfg=self.cfg)
 
+        # TEMP
+        # self.text_engine.generate_response(
+        #     prompt="Hvad er dit navn?",
+        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
+        #     current_response_time=dt.datetime.now(),
+        # )
+        # self.text_engine.generate_response(
+        #     prompt="Sæt en timer på 5 minutter.",
+        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
+        #     current_response_time=dt.datetime.now(),
+        # )
+        # self.text_engine.generate_response(
+        #     prompt="Sæt en timer på 2 minutter.",
+        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
+        #     current_response_time=dt.datetime.now(),
+        # )
+        # self.text_engine.generate_response(
+        #     prompt="Stop timeren på 5 minutter.",
+        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
+        #     current_response_time=dt.datetime.now(),
+        # )
+        # self.text_engine.generate_response(
+        #     prompt="Hvilke timere kører?",
+        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
+        #     current_response_time=dt.datetime.now(),
+        # )
+        # breakpoint()
+
         logger.info("Loading the speech recognition model...")
         self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
             model=self.cfg.asr_model_id,

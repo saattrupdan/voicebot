@@ -1,4 +1,4 @@
-"""Weather-related functions."""
+"""Weather forecast tool."""
 
 import logging
 import os
@@ -51,19 +51,22 @@ WEATHER_CODES = {
 }
 
 
-def get_weather(location: str | None = None) -> str:
+def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
     """Get the weather forecast for today.
 
     Args:
         location:
             The location to get the weather forecast for. Can be None to use the
             current IP location.
+        state:
+            The current state of the text engine.
 
     Returns:
-        The weather forecast for today.
+        A pair (message, state) where message is the weather forecast and state is
+        information that the text engine should store.
     """
     if not is_internet_available():
-        return "Ingen vejrudsigt, da internettet ikke er tilgængeligt."
+        return "Ingen vejrudsigt, da internettet ikke er tilgængeligt.", dict()
 
     if location is None:
         location = geocoder.ip("me").address
@@ -99,7 +102,7 @@ def get_weather(location: str | None = None) -> str:
         ),
     )[0].Hourly()
     if response is None:
-        return "Ingen vejrudsigt tilgængelig."
+        return "Ingen vejrudsigt tilgængelig.", dict()
 
     forecast = {
         "Vejrtype": response.Variables(0),
@@ -134,7 +137,7 @@ def get_weather(location: str | None = None) -> str:
             out += f"{interval_name}: {interval_values}\n"
         out += "\n"
 
-    return out
+    return out, dict()
 
 
 class GetWeatherParameters(BaseModel):

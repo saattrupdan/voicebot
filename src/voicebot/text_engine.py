@@ -39,26 +39,7 @@ class TextEngine:
         )
         self.conversation: list[ChatCompletionMessageParam] = list()
         self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)
-        # self.tools.append(dict(
-        #     type="function",
-        #     function={
-        #         "name": "answer_other_questions",
-        #         "description": "Answer any other questions that are not covered by the other functions.",
-        #         "parameters": dict(
-        #             type="object",
-        #             properties=dict(
-        #                 question=dict(
-        #                     type="string",
-        #                     description="The question to answer."
-        #                 )
-        #             )
-        #         ),
-        #         "return": dict(
-        #             type="string",
-        #             description="The answer to the question."
-        #         )
-        #     },
-        # ))
+        self.state: dict = dict()
 
     def generate_response(
         self,
@@ -95,6 +76,7 @@ class TextEngine:
                 year=dt.datetime.now().year,
                 time=dt.datetime.now().strftime("%H:%M"),
                 tools="\n".join([json.dumps(tool, indent=4) for tool in self.tools]),
+                state=str(self.state),
             )
             self.conversation = [
                 ChatCompletionSystemMessageParam(role="system", content=system_prompt)
@@ -126,8 +108,12 @@ class TextEngine:
                 f"Using the tool {function_name!r} with parameters "
                 f"{function_parameters!r}..."
             )
+            tool_response, state = getattr(tools, function_name)(
+                state=self.state, **function_parameters
+            )
+            self.state.update(state)
+            logger.info(f"Tool response: {tool_response!r}")
 
-            tool_response = getattr(tools, function_name)(**function_parameters)
             self.conversation.extend(
                 [
                     ChatCompletionAssistantMessageParam(

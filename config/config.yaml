@@ -58,6 +58,8 @@ system_prompt: >
   {{
     "answer": your answer to the query
   }}
+
+  Your internal state is {state}.
 tools:
   - type: function
     function:
@@ -68,7 +70,35 @@ tools:
         properties:
           location:
             type: string
-            description: "The city to get the weather for, or null to use the current location."
+            description: >
+              The city to get the weather for, or null to use the current location.
+  - type: function
+    function:
+      name: set_timer
+      description: Set a timer for a given duration.
+      parameters:
+        type: object
+        properties:
+          duration_seconds:
+            type: number
+            description: >
+              The duration of the timer in seconds.
+  - type: function
+    function:
+      name: stop_timer
+      description: Stop the currently running timer.
+      parameters:
+        type: object
+        properties:
+          duration:
+            type: string
+            description: >
+              The duration of the timer to stop, in the format 'HH:MM:SS', or null to
+              stop the timer with the shortest duration.
+  - type: function
+    function:
+      name: list_timers
+      description: List all currently running timers.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:
