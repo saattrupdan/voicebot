@@ -62,7 +62,9 @@ tools:
   - type: function
     function:
       name: get_weather
-      description: Get the current weather in a given city.
+      description: >
+        Get the weather forecast for today and tomorrow, including temperature, rain and
+        wind.
       parameters:
         type: object
         properties:
