@@ -33,7 +33,7 @@ def set_timer(duration_seconds: int, state: dict) -> tuple[str, dict]:
     timer = Timer(duration_seconds=duration_seconds).start()
     running_timers.append(timer)
     return (
-        f"Startet timer med varighed {timer.duration}.",
+        f"Startet timer på {timer.pretty_duration}.",
         dict(running_timers=[timer for timer in running_timers]),
     )
 
@@ -84,7 +84,7 @@ def stop_timer(duration: str | None, state: dict) -> tuple[str, dict]:
         ]
         if not valid_timers:
             return (
-                f"Ingen timer med varighed {duration}.",
+                f"Ingen timer varighed {duration}.",
                 dict(running_timers=[timer for timer in running_timers]),
             )
         timer_to_stop = valid_timers[0]
@@ -92,7 +92,7 @@ def stop_timer(duration: str | None, state: dict) -> tuple[str, dict]:
     timer_to_stop.stop()
     running_timers.remove(timer_to_stop)
     return (
-        f"Timer med varighed {duration} stoppet.",
+        f"Timer på {timer_to_stop.pretty_duration} stoppet.",
         dict(running_timers=[timer for timer in running_timers]),
     )
 
@@ -129,7 +129,7 @@ def list_timers(state: dict) -> tuple[str, dict]:
         return "Ingen kørende timere.", state
 
     timers_info = ", ".join(
-        f"timer med varighed {timer.duration} ({timer.remaining} tilbage)"
+        f"timer på {timer.pretty_duration} ({timer.pretty_remaining} tilbage)"
         for timer in running_timers
     )
     noun = "timer" if len(running_timers) == 1 else "timere"
@@ -187,12 +187,42 @@ class Timer:
             remaining_seconds = max(int(remaining.total_seconds()), 0)
         return dt.timedelta(seconds=remaining_seconds)
 
+    @property
+    def pretty_duration(self) -> str:
+        """Return the pretty duration of the timer."""
+        return self.prettify_timedelta(timedelta=self.duration)
+
+    @property
+    def pretty_remaining(self) -> str:
+        """Return the pretty remaining duration of the timer."""
+        return self.prettify_timedelta(timedelta=self.remaining)
+
     def __repr__(self) -> str:
         """Return the representation of the timer."""
         out = f"Timer(duration={self.duration}"
         if self.start_time is not None:
             out += f", remaining={self.remaining}"
         return out + ")"
+
+    @staticmethod
+    def prettify_timedelta(timedelta: dt.timedelta) -> str:
+        """Prettify a timedelta.
+
+        Args:
+            timedelta:
+                The timedelta to prettify.
+
+        Returns:
+            The prettified timedelta.
+        """
+        hours = timedelta.seconds // 3600
+        minutes = (timedelta.seconds % 3600) // 60
+        seconds = timedelta.seconds % 60
+        if hours > 0:
+            return f"{hours} timer, {minutes} minutter og {seconds} sekunder"
+        if minutes > 0:
+            return f"{minutes} minutter og {seconds} sekunder"
+        return f"{seconds} sekunder"
 
     @staticmethod
     def _run_timer(duration_seconds: int) -> None:
@@ -204,4 +234,6 @@ class Timer:
         """
         sleep(duration_seconds)
         logging.info("Timer finished! Announcing it...")
-        synthesise_speech("Beep beep. Beep beep. Tiden er gået!")
+        while True:
+            synthesise_speech("Beep beep. Beep beep. Tiden er gået!")
+            sleep(3)
