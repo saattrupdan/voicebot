@@ -1,54 +1,65 @@
 """Generation of Danish speech."""
 
-import os
-from functools import partial
+import tempfile
 from pathlib import Path
-from typing import Literal
 
-import nltk
-from gtts import gTTS
-from nltk import sent_tokenize
+import torch
+import torchaudio
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+from huggingface_hub._snapshot_download import snapshot_download
 from pydub import AudioSegment
 from pydub.playback import play
 
-# Download the NLTK tokenizer model
-nltk.download("punkt_tab", quiet=True)
+
+class DanishChatterBox(ChatterboxMultilingualTTS):
+    """A Danish speech synthesiser using Chatterbox."""
+
+    @classmethod
+    def from_pretrained(cls, device: torch.device) -> "ChatterboxMultilingualTTS":
+        """Load the pretrained Danish Chatterbox model.
+
+        Args:
+            device:
+                The device to load the model onto.
+
+        Returns:
+            The Danish Chatterbox model.
+        """
+        ckpt_dir = Path(
+            snapshot_download(
+                repo_id="CoRal-project/tts-base",
+                repo_type="model",
+                revision="main",
+                allow_patterns=[
+                    "ve.pt",
+                    "t3_mtl23ls_v2.safetensors",
+                    "s3gen.pt",
+                    "grapheme_mtl_merged_expanded_v1.json",
+                    "conds.pt",
+                    "Cangjie5_TC.json",
+                ],
+            )
+        )
+        return cls.from_local(ckpt_dir=ckpt_dir, device=device)
 
 
-def synthesise_speech(
-    text: str, engine: Literal["gtts", "macos", "auto"] = "auto"
-) -> None:
+def synthesise_speech(text: str, synthesiser: ChatterboxMultilingualTTS) -> None:
     """Synthesise speech from text.
 
     Args:
         text:
             Text to be spoken.
-        engine:
-            The TTS engine to use. Can be `gtts` (Google Translate's text-to-speech),
-            `macos` (built-in `say` TTS on MacOS devices) or `auto`, to use `macos` if
-            it is available and `gtts` otherwise.
+        synthesiser:
+            The speech synthesiser to use.
     """
-    text = text.replace("m/s", "metersekunder").replace("`", "'")
-
-    if engine == "auto":
-        macos_available = Path("/usr/bin/say").exists()
-        engine = "macos" if macos_available else "gtts"
-
-    match engine:
-        case "macos":
-            os.system(f'say "{text}"')
-        case "gtts":
-            tts = gTTS(
-                text=text,
-                tld="dk",
-                lang="da",
-                lang_check=False,
-                tokenizer_func=partial(sent_tokenize, language="danish"),
-            )
-            output_path = Path(".temp.mp3")
-            tts.save(savefile=output_path)
-            play_sound(path=output_path)
-            output_path.unlink()
+    generated_speech = synthesiser.generate(text=text, language_id="da")
+    with tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav_file:
+        torchaudio.save(
+            uri=temp_wav_file.name,
+            src=generated_speech.unsqueeze(0).cpu(),
+            sample_rate=24_000,
+        )
+        play_sound(path=temp_wav_file.name)
 
 
 def play_sound(path: str | Path) -> None:

@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - synchronize
@@ -10,35 +10,55 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   code-check:
     if: github.event.pull_request.draft == false
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: pre-commit/action@v3.0.1
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          ref: main
+
+      - name: Install uv and set up Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: "3.11"
+
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
 
   pytest:
     if: github.event.pull_request.draft == false
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
         matrix:
-            os: [windows-latest, macos-latest, ubuntu-latest]
-            python-version: ["3.11"]
-    runs-on: ${{ matrix.os }}
+            python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Poetry
-        run: pipx install poetry==1.8.2
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
+          ref: main
+
+      - name: Install uv and set up Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
           python-version: ${{ matrix.python-version }}
-          cache: poetry
 
       - name: Install Dependencies
-        run: |
-          poetry env use "${{ matrix.python-version }}"
-          poetry install
+        run: uv sync --no-dev
+
       - name: Test with pytest
-        run: poetry run pytest
+        run: uv run pytest

@@ -1,58 +1,69 @@
-[tool.poetry]
+[project]
 name = "voicebot"
-description = "A simple Danish voice bot."
 version = "0.0.0"
-authors = [
-    "Dan Saattrup Nielsen <saattrupdan@gmail.com>",
-]
+description = "A simple Danish voice bot."
 readme = "README.md"
-license = "MIT"
-repository = "https://github.com/saattrupdan/voicebot"
+authors = [
+    {name = "Dan Saattrup Smart", email = "saattrupdan@gmail.com"},
+]
+maintainers = [
+    {name = "Dan Saattrup Smart", email = "saattrupdan@gmail.com"},
+]
+requires-python = ">=3.11,<4.0"
+dependencies = [
+  "hydra-core>=1.3.2",
+  "openwakeword>=0.6.0",
+  "transformers>=4.44.2",
+  "openai>=1.44.0",
+  "pydub>=0.25.1",
+  "torch>=2.4.1",
+  "python-dotenv>=1.0.1",
+  "sounddevice>=0.5.0",
+  "pyctcdecode>=0.5.0",
+  "pvrecorder>=1.2.2",
+  "openmeteo-requests>=1.3.0",
+  "requests-cache>=1.2.1",
+  "retry-requests>=2.0.0",
+  "geocoder>=1.38.1",
+  "fastapi>=0.115.0",
+  "numpy>=1.26.4",
+  "chatterbox-tts>=0.1.3",
+  "torchaudio>=2.6.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<4.0"
-hydra-core = "^1.3.2"
-openwakeword = "^0.6.0"
-transformers = "^4.44.2"
-openai = "^1.44.0"
-nltk = "^3.9.1"
-gtts = "^2.5.3"
-pydub = "^0.25.1"
-torch = "^2.4.1"
-python-dotenv = "^1.0.1"
-sounddevice = "^0.5.0"
-kenlm = {url = "https://github.com/kpu/kenlm/archive/master.zip"}
-pyctcdecode = "^0.5.0"
-pvrecorder = "^1.2.2"
-openmeteo-requests = "^1.3.0"
-requests-cache = "^1.2.1"
-retry-requests = "^2.0.0"
-geocoder = "^1.38.1"
-fastapi = "^0.115.0"
+[tool.uv]
+override-dependencies = [
+    "pkuseg; sys_platform == 'never'",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.1.1"
-pytest-cov = ">=4.1.0"
-pre-commit = ">=3.6.2"
-pdoc = ">=14.1.0"
-readme-coverage-badger = ">=0.1.2"
-click = ">=8.1.7"
-ruff = ">=0.3.2"
-mypy = ">=1.9.0"
-nbstripout = ">=0.7.1"
+[project.urls]
+Repository = "https://github.com/saattrupdan/voicebot"
+Issues = "https://github.com/saattrupdan/voicebot/issues"
 
-[[tool.poetry.source]]
-name = "pypi"
+[project.license]
+file = "LICENSE"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.1.1",
+  "pytest-cov>=4.1.0",
+  "pre-commit>=3.6.2",
+  "pdoc>=14.1.0",
+  "readme-coverage-badger>=0.1.2",
+  "click>=8.1.7",
+  "ruff>=0.3.2",
+  "pyrefly>=0.43.1",
+  "nbstripout>=0.7.1",
+]
 
 [tool.ruff]
 target-version = "py311"
-
 line-length = 88
 exclude = [
     ".git",
-    ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".euroeval_cache",
     ".venv",
 ]
 extend-include = [
@@ -66,16 +77,37 @@ docstring-code-format = true
 skip-magic-trailing-comma = true
 
 [tool.ruff.lint]
-extend-select = [
+select = [
+    # isort (imports)
     "I",
+    # pydocstyle (docstrings)
     "D",
+    # pycodestyle errors and warnings (PEP8)
+    "E",
+    "W",
+    # flake-annotations (type hints)
+    "ANN",
+    # Pyflakes
+    "F",
+]
+ignore = [
+    # Type annotations for "self" arguments
+    "ANN101",
+    # Type annotations for "cls" arguments
+    "ANN102",
+    # Type annotations for *args
+    "ANN002",
+    # Type annotations for **kwargs
+    "ANN003",
+    # Docstrings for **kwargs
+    "D417",
 ]
 
 [tool.ruff.lint.extend-per-file-ignores]
 "__init__.py" = [
     "F401",
 ]
-"src/voicebot/speech_recording.py" = [
+"src/scripts/main.py" = [
     "I",
 ]
 
@@ -88,10 +120,10 @@ convention = "google"
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = [
-    '--durations=10',
-    '--color=yes',
-    '--doctest-modules',
-    '--cov=src/voicebot',
+    "--cov=src/euroeval",
+    "--color=yes",
+    "-vvv",
+    "--allow-unix-socket",
 ]
 xfail_strict = true
 filterwarnings = [
@@ -100,16 +132,19 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
     "ignore::ImportWarning",
+    "ignore::ResourceWarning",
     "ignore::FutureWarning",
 ]
-log_cli_level = "info"
+log_cli_level = "INFO"
 testpaths = [
     "tests",
-    "src/voicebot",
+    "src/euroeval",
+]
+pythonpath = [
+    "src",
+    "src/scripts",
 ]
 
 [build-system]
-requires = [
-    "poetry-core>=1.0.0",
-]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

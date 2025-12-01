@@ -1,6 +1,6 @@
 # This ensures that we can call `make <target>` even if `<target>` exists as a file or
 # directory.
-.PHONY: docs help
+.PHONY: help
 
 # Exports all variables defined in the makefile available to scripts
 .EXPORT_ALL_VARIABLES:
@@ -10,12 +10,6 @@ ifeq (,$(wildcard .env))
   $(shell touch .env)
 endif
 
-# Create poetry env file if it does not already exist
-ifeq (,$(wildcard ${HOME}/.poetry/env))
-	$(shell mkdir ${HOME}/.poetry)
-	$(shell touch ${HOME}/.poetry/env)
-endif
-
 # Includes environment variables from the .env file
 include .env
 
@@ -23,106 +17,55 @@ include .env
 export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=1
 export GRPC_PYTHON_BUILD_SYSTEM_ZLIB=1
 
-# Ensure that `pipx` and `poetry` will be able to run, since `pip` and `brew` put these
-# in the following folders on Unix systems
-export PATH := ${HOME}/.local/bin:/opt/homebrew/bin:$(PATH)
+# Set the PATH env var used by cargo and uv
+export PATH := ${HOME}/.local/bin:${HOME}/.cargo/bin:$(PATH)
 
-# Prevent DBusErrorResponse during `poetry install`.
-# See https://stackoverflow.com/a/75098703 for more information
-export PYTHON_KEYRING_BACKEND := keyring.backends.null.Keyring
+# Set the shell to bash, enabling the use of `source` statements
+SHELL := /bin/bash
 
 help:
-	@grep -E '^[0-9a-zA-Z_-]+:.*?## .*$$' makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install dependencies
-	@echo "Installing the 'voicebot' project..."
-	@$(MAKE) --quiet install-brew
-	@$(MAKE) --quiet install-pipx
-	@$(MAKE) --quiet install-poetry
+	@echo "Installing the 'Voicebot' project..."
+	@$(MAKE) --quiet install-rust
+	@$(MAKE) --quiet install-uv
 	@$(MAKE) --quiet install-dependencies
 	@$(MAKE) --quiet setup-environment-variables
-	@$(MAKE) --quiet setup-git
 	@$(MAKE) --quiet install-pre-commit
-	@echo "Installed the 'voicebot' project! You can now activate your virtual environment with 'source .venv/bin/activate'."
-	@echo "Note that this is a Poetry project. Use 'poetry add <package>' to install new dependencies and 'poetry remove <package>' to remove them."
+	@echo "Installed the 'Voicebot' project."
 
-install-brew:
-	@if [ $$(uname) = "Darwin" ] && [ "$(shell which brew)" = "" ]; then \
-		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
-		echo "Installed Homebrew."; \
+install-rust:
+	@if [ "$(shell which rustup)" = "" ]; then \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+		echo "Installed Rust."; \
 	fi
 
-install-pipx:
-	@if [ "$(shell which pipx)" = "" ]; then \
-		uname=$$(uname); \
-			case $${uname} in \
-				(*Darwin*) installCmd='brew install pipx';; \
-				(*CYGWIN*) installCmd='py -3 -m pip install --upgrade --user pipx';; \
-				(*) installCmd='python3 -m pip install --upgrade --user pipx';; \
-			esac; \
-			$${installCmd}; \
-		pipx ensurepath --force; \
-		echo "Installed pipx."; \
-	fi
-
-install-poetry:
-	@if [ ! "$(shell poetry --version)" = "Poetry (version 1.8.2)" ]; then \
-		python3 -m pip uninstall -y poetry poetry-core poetry-plugin-export; \
-		pipx install --force poetry==1.8.2; \
-		echo "Installed Poetry."; \
+install-uv:
+	@if [ "$(shell which uv)" = "" ]; then \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+			echo "Installed uv."; \
+		else \
+			echo "Updating uv..."; \
+			uv self update || true; \
 	fi
 
 install-dependencies:
-	@poetry env use python3.11 && poetry install
+	@uv python install 3.11
+	@uv sync --all-extras --all-groups --python 3.11
 
 setup-environment-variables:
-	poetry run python src/scripts/fix_dot_env_file.py; \
+	@uv run python src/scripts/fix_dot_env_file.py
 
 setup-environment-variables-non-interactive:
-	poetry run python src/scripts/fix_dot_env_file.py --non-interactive; \
+	@uv run python src/scripts/fix_dot_env_file.py --non-interactive
 
-setup-git:
-	@git config --global init.defaultBranch main
-	@git init
-	@git config --local user.name "${GIT_NAME}"
-	@git config --local user.email "${GIT_EMAIL}"
-
-install-pre-commit:  ## Install pre-commit hooks
-	@poetry run pre-commit install
-
-docs:  ## Generate documentation
-	@PDOC_ALLOW_EXEC=1 poetry run pdoc --docformat google src/voicebot -o docs
-	@echo "Saved documentation."
-
-view-docs:  ## View documentation
-	@echo "Viewing API documentation..."
-	@uname=$$(uname); \
-		case $${uname} in \
-			(*Linux*) openCmd='xdg-open';; \
-			(*Darwin*) openCmd='open';; \
-			(*CYGWIN*) openCmd='cygstart';; \
-			(*) echo 'Error: Unsupported platform: $${uname}'; exit 2;; \
-		esac; \
-		"$${openCmd}" docs/voicebot.html
+install-pre-commit:
+	@uv run pre-commit install
+	@uv run pre-commit autoupdate
 
 test:  ## Run tests
-	@poetry run pytest && poetry run readme-cov
+	@uv run pytest && uv run readme-cov && rm .coverage*
 
-docker:  ## Build Docker image and run container
-	@docker build -t voicebot .
-	@docker run -it --rm voicebot
-
-tree:  ## Print directory tree
-	@tree -a --gitignore -I .git .
-
-lint:  ## Lint the project
-	poetry run ruff check . --fix
-
-format:  ## Format the project
-	poetry run ruff format .
-
-type-check:  ## Type-check the project
-	@poetry run mypy . --install-types --non-interactive --ignore-missing-imports --show-error-codes --check-untyped-defs
-
-voicebot:  ## Start the voice bot
-	@poetry run python src/scripts/run_bot.py
+check:  ## Lint, format, and type-check the code
+	@uv run pre-commit run --all-files

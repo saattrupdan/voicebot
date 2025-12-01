@@ -4,16 +4,14 @@ import logging
 
 import numpy as np
 import torch
-from transformers import AutomaticSpeechRecognitionPipeline
+from transformers.pipelines import Pipeline
 
 logger = logging.getLogger(__name__)
 logging.getLogger("torch._dynamo.output_graph").setLevel(logging.CRITICAL)
 
 
 def transcribe_speech(
-    speech: np.ndarray,
-    transcriber: AutomaticSpeechRecognitionPipeline,
-    manual_fixes: dict[str, str],
+    speech: np.ndarray, transcriber: Pipeline, manual_fixes: dict[str, str]
 ) -> str:
     """Transcribe speech.
 

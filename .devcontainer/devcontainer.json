@@ -1,8 +1,0 @@
-{
-  "name": "Python 3",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "features": {
-    "ghcr.io/devcontainers-contrib/features/coverage-py:2": {}
-  },
-  "postCreateCommand": "make install-pipx && make install-poetry && make install-dependencies && make setup-environment-variables-non-interactive && make setup-git"
-}

@@ -25,11 +25,11 @@ wake_word_responses:
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
-asr_model_id: alexandrainst/roest-315m
+asr_model_id: alexandrainst/roest-whisper-1.5b
 
 # Text engine parameters
 server: http://localhost:1234/v1
-text_model_id: mlx-community/meta-llama-3.1-8b-instruct
+text_model_id: mlx-community/gemma-3-12b-it-8bit
 temperature: 0.0
 min_prompt_length: 5
 system_prompt: >

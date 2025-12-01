@@ -7,7 +7,9 @@ import openwakeword as oww
 import torch
 import transformers.utils.logging as hf_logging
 from omegaconf import DictConfig
-from transformers import AutomaticSpeechRecognitionPipeline, pipeline
+from transformers.pipelines import Pipeline, pipeline
+
+from voicebot.speech_synthesis import DanishChatterBox
 
 from .speech_recognition import transcribe_speech
 from .speech_recording import calibrate_audio_threshold, record_speech
@@ -72,28 +74,31 @@ class VoiceBot:
         # breakpoint()
 
         logger.info("Loading the speech recognition model...")
-        self.transcriber: AutomaticSpeechRecognitionPipeline = pipeline(
+        self.transcriber: Pipeline = pipeline(
             model=self.cfg.asr_model_id,
             device=self.device,
             task="automatic-speech-recognition",
         )
 
+        logger.info("Loading the speech synthesis model...")
+        self.synthesiser = DanishChatterBox.from_pretrained(device=self.device)
+
     @property
-    def device(self) -> str:
+    def device(self) -> torch.device:
         """Return the device on which the bot is running."""
         if torch.cuda.is_available():
-            return "cuda"
+            return torch.device("cuda")
         elif torch.backends.mps.is_available():
-            return "mps"
+            return torch.device("mps")
         else:
-            return "cpu"
+            return torch.device("cpu")
 
     def run(self) -> None:
         """Run the bot."""
         last_response_time = dt.datetime(year=1900, month=1, day=1)
 
         logger.info("Playing welcome message...")
-        synthesise_speech(text=self.cfg.starting_phrase)
+        synthesise_speech(text=self.cfg.starting_phrase, synthesiser=self.synthesiser)
 
         while True:
             speech, audio_start = record_speech(
@@ -116,5 +121,5 @@ class VoiceBot:
                     current_response_time=audio_start,
                 )
                 if response:
-                    synthesise_speech(text=response)
+                    synthesise_speech(text=response, synthesiser=self.synthesiser)
                     last_response_time = dt.datetime.now()
