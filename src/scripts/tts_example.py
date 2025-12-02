@@ -23,7 +23,7 @@ def main() -> None:
 
     # Load the model
     checkpoint_dir = Path(local_path).parent  # Same for all files
-    model = ChatterboxMultilingualTTS.from_local(checkpoint_dir, device="mps")
+    model = ChatterboxMultilingualTTS.from_local(checkpoint_dir, device="cuda")
 
     # Generate speech to a wav file
     text = "Dette er en test!"
