@@ -15,6 +15,7 @@ def main() -> None:
     for fpath in [
         "ve.pt",
         "t3_23lang.safetensors",
+        "mtl_tokenizer.json",
         "s3gen.pt",
         "grapheme_mtl_merged_expanded_v1.json",
         "conds.pt",
