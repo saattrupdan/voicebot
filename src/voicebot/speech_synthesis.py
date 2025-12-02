@@ -1,5 +1,6 @@
 """Generation of Danish speech."""
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from huggingface_hub._snapshot_download import snapshot_download
 from pydub import AudioSegment
 from pydub.playback import play
+
+logger = logging.getLogger(__name__)
 
 
 class DanishChatterBox(ChatterboxMultilingualTTS):
@@ -44,6 +47,7 @@ def synthesise_speech(text: str, synthesiser: ChatterboxMultilingualTTS) -> None
     """
     generated_speech = synthesiser.generate(text=text, language_id="da")
     with tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav_file:
+        logger.info(f"Saving generated speech of shape {generated_speech.shape}...")
         torchaudio.save(
             uri=temp_wav_file.name,
             src=generated_speech.unsqueeze(0).cpu(),
