@@ -27,17 +27,7 @@ class DanishChatterBox(ChatterboxMultilingualTTS):
         """
         ckpt_dir = Path(
             snapshot_download(
-                repo_id="CoRal-project/tts-base",
-                repo_type="model",
-                revision="main",
-                allow_patterns=[
-                    "ve.pt",
-                    "t3_mtl23ls_v2.safetensors",
-                    "s3gen.pt",
-                    "grapheme_mtl_merged_expanded_v1.json",
-                    "conds.pt",
-                    "Cangjie5_TC.json",
-                ],
+                repo_id="CoRal-project/tts-base-compatible", repo_type="model"
             )
         )
         return cls.from_local(ckpt_dir=ckpt_dir, device=device)

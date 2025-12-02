@@ -3,17 +3,17 @@
 import datetime as dt
 import logging
 
+import onnxruntime as ort
 import openwakeword as oww
 import torch
 import transformers.utils.logging as hf_logging
 from omegaconf import DictConfig
+from openwakeword.utils import download_models as download_wakeword_models
 from transformers.pipelines import Pipeline, pipeline
-
-from voicebot.speech_synthesis import DanishChatterBox
 
 from .speech_recognition import transcribe_speech
 from .speech_recording import calibrate_audio_threshold, record_speech
-from .speech_synthesis import synthesise_speech
+from .speech_synthesis import DanishChatterBox, synthesise_speech
 from .text_engine import TextEngine
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ class VoiceBot:
             self.audio_threshold = cfg.audio_threshold
 
         logger.info("Loading the wake word model...")
+        ort.set_default_logger_severity(3)
+        download_wakeword_models(model_names=["hey_jarvis"])
         self.wake_word_model = oww.Model(
             wakeword_models=["hey_jarvis"], inference_framework="onnx"
         )
@@ -71,7 +73,9 @@ class VoiceBot:
         #     last_response_time=dt.datetime(year=1900, month=1, day=1),
         #     current_response_time=dt.datetime.now(),
         # )
-        # breakpoint()
+
+        logger.info("Loading the speech synthesis model...")
+        self.synthesiser = DanishChatterBox.from_pretrained(device=self.device)
 
         logger.info("Loading the speech recognition model...")
         self.transcriber: Pipeline = pipeline(
@@ -79,9 +83,6 @@ class VoiceBot:
             device=self.device,
             task="automatic-speech-recognition",
         )
-
-        logger.info("Loading the speech synthesis model...")
-        self.synthesiser = DanishChatterBox.from_pretrained(device=self.device)
 
     @property
     def device(self) -> torch.device:
@@ -105,6 +106,8 @@ class VoiceBot:
                 last_response_time=last_response_time,
                 audio_threshold=self.audio_threshold,
                 cfg=self.cfg,
+                synthesiser=self.synthesiser,
+                wake_word_model=self.wake_word_model,
             )
             if audio_start is None:
                 continue

@@ -1,18 +1,19 @@
 """Recording of speech."""
 
-from collections.abc import Generator
-from contextlib import contextmanager
 import datetime as dt
 import logging
+from collections.abc import Generator
+from contextlib import contextmanager
 from time import sleep
 
 import numpy as np
 import onnxruntime as ort
 import openwakeword as oww
-from openwakeword.utils import download_models as download_wakeword_models
-from omegaconf import DictConfig
-from pvrecorder import PvRecorder
 import sounddevice
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+from omegaconf import DictConfig
+from openwakeword.utils import download_models as download_wakeword_models
+from pvrecorder import PvRecorder
 
 from .speech_synthesis import synthesise_speech
 
@@ -30,7 +31,11 @@ wake_word_model = oww.Model(wakeword_models=["hey_jarvis"], inference_framework=
 
 
 def record_speech(
-    last_response_time: dt.datetime, audio_threshold: int, cfg: DictConfig
+    last_response_time: dt.datetime,
+    audio_threshold: int,
+    wake_word_model: oww.Model,
+    synthesiser: ChatterboxMultilingualTTS,
+    cfg: DictConfig,
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
 
@@ -39,6 +44,10 @@ def record_speech(
             Time of the last response.
         audio_threshold:
             The minimum audio threshold.
+        wake_word_model:
+            The wake word detection model.
+        synthesiser:
+            The speech synthesiser.
         cfg:
             Hydra configuration object.
 
@@ -86,7 +95,7 @@ def record_speech(
                 if wake_word_probability >= cfg.wake_word_probability_threshold:
                     logger.info("Wakeword detected!")
                     wake_word_response = rng.choice(cfg.wake_word_responses)
-                    synthesise_speech(text=wake_word_response)
+                    synthesise_speech(text=wake_word_response, synthesiser=synthesiser)
                     frames_left_to_ignore = (
                         cfg.wake_word_seconds // cfg.num_seconds_per_chunk
                     )
