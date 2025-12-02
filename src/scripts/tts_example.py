@@ -23,12 +23,12 @@ def main() -> None:
 
     # Load the model
     checkpoint_dir = Path(local_path).parent  # Same for all files
-    model = ChatterboxMultilingualTTS.from_local(checkpoint_dir, device="cuda")
+    model = ChatterboxMultilingualTTS.from_local(ckpt_dir=checkpoint_dir, device="cuda")
 
     # Generate speech to a wav file
     text = "Dette er en test!"
     wav = model.generate(
-        text, language_id="da", exaggeration=1.0, cfg_weight=0.5, temperature=0.4
+        text=text, language_id="da", exaggeration=1.0, cfg_weight=0.5, temperature=0.4
     )
     ta.save(uri="test.wav", src=wav, sample_rate=model.sr)
 

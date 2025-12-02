@@ -28,6 +28,7 @@ dependencies = [
   "torchaudio>=2.6.0",
   "onnxruntime>=1.23.2",
   "openwakeword>=0.6.0",
+  "peft>=0.18.0",
 ]
 
 [tool.uv.extra-build-dependencies]
