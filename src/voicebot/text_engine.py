@@ -35,10 +35,10 @@ class TextEngine:
         """
         self.cfg = cfg
         self.client = openai.OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"), base_url=cfg.server
+            api_key=os.getenv("OPENAI_API_KEY", "not-set"), base_url=cfg.server
         )
         self.conversation: list[ChatCompletionMessageParam] = list()
-        self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)
+        self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)  # type: ignore[bad-assignment]
         self.state: dict = dict()
 
     def generate_response(
