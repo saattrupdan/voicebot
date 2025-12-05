@@ -25,7 +25,7 @@ wake_word_responses:
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
-asr_model_id: CoRal-project/roest-wav2vec2-315m-v2
+asr_model_id: alexandrainst/roest-wav2vec2-315m
 
 # Text engine parameters
 server: http://localhost:1234/v1

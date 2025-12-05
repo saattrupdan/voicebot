@@ -7,13 +7,11 @@ import importlib.metadata
 import logging
 import warnings
 
-from .bot import VoiceBot
-
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-
-# Fetches the version of the package as defined in pyproject.toml
-__version__ = importlib.metadata.version(__package__)
-
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+from .bot import VoiceBot  # noqa: E402
+
+# Fetches the version of the package as defined in pyproject.toml
+__version__ = importlib.metadata.version(__package__ or "voicebot")
