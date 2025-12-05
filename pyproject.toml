@@ -30,10 +30,15 @@ dependencies = [
   "openwakeword>=0.6.0",
   "peft>=0.18.0",
   "setuptools>=80.9.0,<81.0.0",
+  "kenlm",
 ]
 
 [tool.uv.extra-build-dependencies]
 pkuseg = ["numpy>=1.25.2"]
+
+[tool.uv.sources]
+chatterbox-tts = { path = "../chatterbox_fork" }
+kenlm = { url = "https://github.com/kpu/kenlm/archive/master.zip" }
 
 [project.urls]
 Repository = "https://github.com/saattrupdan/voicebot"
