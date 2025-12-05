@@ -69,3 +69,6 @@ test:  ## Run tests
 
 check:  ## Lint, format, and type-check the code
 	@uv run pre-commit run --all-files
+
+bot:	## Run the voicebot
+	@uv run --preview-features extra-build-dependencies src/scripts/run_bot.py
