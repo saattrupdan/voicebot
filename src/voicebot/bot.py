@@ -13,7 +13,7 @@ from transformers.pipelines import Pipeline, pipeline
 
 from .speech_recognition import transcribe_speech
 from .speech_recording import calibrate_audio_threshold, record_speech
-from .speech_synthesis import DanishChatterBox, synthesise_speech
+from .speech_synthesis import synthesise_speech
 from .text_engine import TextEngine
 
 logger = logging.getLogger(__name__)
@@ -74,8 +74,11 @@ class VoiceBot:
         #     current_response_time=dt.datetime.now(),
         # )
 
-        logger.info("Loading the speech synthesis model...")
-        self.synthesiser = DanishChatterBox.from_pretrained(device=self.device)
+        # logger.info("Loading the speech synthesis model...")
+        # self.synthesiser = ChatterboxMultilingualTTS.from_pretrained(
+        #     device=self.device, repo_id="CoRal-project/tts-base-compatible"
+        # )
+        self.synthesiser = None
 
         logger.info("Loading the speech recognition model...")
         self.transcriber: Pipeline = pipeline(

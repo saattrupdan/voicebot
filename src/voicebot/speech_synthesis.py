@@ -1,51 +1,39 @@
 """Generation of Danish speech."""
 
+import os
 import tempfile
 from pathlib import Path
 
-import torch
 import torchaudio
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-from huggingface_hub._snapshot_download import snapshot_download
 from pydub import AudioSegment
 from pydub.playback import play
 
 
-class DanishChatterBox(ChatterboxMultilingualTTS):
-    """A Danish speech synthesiser using Chatterbox."""
-
-    @classmethod
-    def from_pretrained(cls, device: torch.device) -> "ChatterboxMultilingualTTS":
-        """Load the pretrained Danish Chatterbox model.
-
-        Args:
-            device:
-                The device to load the model onto.
-
-        Returns:
-            The Danish Chatterbox model.
-        """
-        ckpt_dir = Path(
-            snapshot_download(
-                repo_id="CoRal-project/tts-base-compatible", repo_type="model"
-            )
-        )
-        return cls.from_local(ckpt_dir=ckpt_dir, device=device)
-
-
-def synthesise_speech(text: str, synthesiser: ChatterboxMultilingualTTS) -> None:
+def synthesise_speech(
+    text: str, synthesiser: ChatterboxMultilingualTTS | None = None
+) -> None:
     """Synthesise speech from text.
 
     Args:
         text:
             Text to be spoken.
-        synthesiser:
-            The speech synthesiser to use.
+        synthesiser (optional):
+            The speech synthesiser to use. Can be None to just use the MacOS `say`
+            command.
     """
-    generated_speech = synthesiser.generate(text=text, language_id="da")
+    if synthesiser is None:
+        os.system(f'say "{text}"')
+        return
+
+    generated_speech = synthesiser.generate(
+        text=text, language_id="da", audio_prompt_path="mic.wav"
+    )
     with tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav_file:
         torchaudio.save(
-            uri=temp_wav_file.name, src=generated_speech.cpu(), sample_rate=24_000
+            uri=temp_wav_file.name,
+            src=generated_speech.cpu(),
+            sample_rate=synthesiser.sr,
         )
         play_sound(path=temp_wav_file.name)
 

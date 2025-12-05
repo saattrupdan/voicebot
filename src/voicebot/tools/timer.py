@@ -234,6 +234,4 @@ class Timer:
         """
         sleep(duration_seconds)
         logging.info("Timer finished! Announcing it...")
-        while True:
-            synthesise_speech("Beep beep. Beep beep. Tiden er gået!")
-            sleep(3)
+        synthesise_speech("Beep beep. Beep beep. Tiden er gået!")

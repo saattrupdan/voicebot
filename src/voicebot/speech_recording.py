@@ -34,7 +34,7 @@ def record_speech(
     last_response_time: dt.datetime,
     audio_threshold: int,
     wake_word_model: oww.Model,
-    synthesiser: ChatterboxMultilingualTTS,
+    synthesiser: ChatterboxMultilingualTTS | None,
     cfg: DictConfig,
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
@@ -47,7 +47,7 @@ def record_speech(
         wake_word_model:
             The wake word detection model.
         synthesiser:
-            The speech synthesiser.
+            The speech synthesiser, or None to use the MacOS `say` command.
         cfg:
             Hydra configuration object.
 

@@ -7,7 +7,7 @@ starting_phrase: Hej, så jeg klar. Sig 'Hey Jarvis' for at starte.
 num_seconds_per_chunk: 0.08
 calibrate: false
 calibration_duration: 3.0
-audio_threshold: 1000
+audio_threshold: 100
 max_seconds_silence: 2.0
 max_seconds_audio: 10.0
 follow_up_max_seconds: 5.0
@@ -25,12 +25,12 @@ wake_word_responses:
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
-asr_model_id: alexandrainst/roest-whisper-1.5b
+asr_model_id: CoRal-project/roest-wav2vec2-315m-v2
 
 # Text engine parameters
 server: http://localhost:1234/v1
-text_model_id: mlx-community/gemma-3-12b-it-8bit
-temperature: 0.0
+text_model_id: google/gemma-3n-e4b
+temperature: 0.6
 min_prompt_length: 5
 system_prompt: >
   Your name is Jarvis and you are a Danish voice robot. You are sweet, kind and helpful,
