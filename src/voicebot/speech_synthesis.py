@@ -23,7 +23,8 @@ def synthesise_speech(
             command.
     """
     if synthesiser is None:
-        os.system(f'say "{text}"')
+        cleaned_text = text.replace('"', "'")
+        os.system(f'say "{cleaned_text}"')
         return
 
     generated_speech = synthesiser.generate(
