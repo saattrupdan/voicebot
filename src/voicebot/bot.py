@@ -9,6 +9,7 @@ import torch
 import transformers.utils.logging as hf_logging
 from omegaconf import DictConfig
 from openwakeword.utils import download_models as download_wakeword_models
+from punctfix.inference import PunctFixer
 from transformers.pipelines import Pipeline, pipeline
 
 from .speech_recognition import transcribe_speech
@@ -47,33 +48,6 @@ class VoiceBot:
         logger.info("Loading the text engine model...")
         self.text_engine = TextEngine(cfg=self.cfg)
 
-        # TEMP
-        # self.text_engine.generate_response(
-        #     prompt="Hvad er dit navn?",
-        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
-        #     current_response_time=dt.datetime.now(),
-        # )
-        # self.text_engine.generate_response(
-        #     prompt="Sæt en timer på 5 minutter.",
-        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
-        #     current_response_time=dt.datetime.now(),
-        # )
-        # self.text_engine.generate_response(
-        #     prompt="Sæt en timer på 2 minutter.",
-        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
-        #     current_response_time=dt.datetime.now(),
-        # )
-        # self.text_engine.generate_response(
-        #     prompt="Stop timeren på 5 minutter.",
-        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
-        #     current_response_time=dt.datetime.now(),
-        # )
-        # self.text_engine.generate_response(
-        #     prompt="Hvilke timere kører?",
-        #     last_response_time=dt.datetime(year=1900, month=1, day=1),
-        #     current_response_time=dt.datetime.now(),
-        # )
-
         # logger.info("Loading the speech synthesis model...")
         # self.synthesiser = ChatterboxMultilingualTTS.from_pretrained(
         #     device=self.device, repo_id="CoRal-project/tts-base-compatible"
@@ -86,6 +60,9 @@ class VoiceBot:
             device=self.device,
             task="automatic-speech-recognition",
         )
+
+        logger.info("Loading the punctfix model...")
+        self.punct_fixer = PunctFixer(language="da", device=self.device)
 
     @property
     def device(self) -> torch.device:
@@ -118,6 +95,7 @@ class VoiceBot:
             text = transcribe_speech(
                 speech=speech,
                 transcriber=self.transcriber,
+                punct_fixer=self.punct_fixer,
                 manual_fixes=self.cfg.manual_fixes,
             )
             if text:
