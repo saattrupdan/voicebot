@@ -6,6 +6,7 @@ import multiprocessing as mp
 from time import sleep
 from typing import Literal
 
+import chime
 from pydantic import BaseModel
 
 from ..speech_synthesis import synthesise_speech
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 ### Setting a timer ###
 
 
-def set_timer(duration_seconds: int, state: dict) -> tuple[str, dict]:
+def set_timer(duration_seconds: int, state: dict) -> tuple[Literal[""], dict]:
     """Set a timer for the given duration.
 
     Args:
@@ -32,10 +33,11 @@ def set_timer(duration_seconds: int, state: dict) -> tuple[str, dict]:
     running_timers = state.get("running_timers", [])
     timer = Timer(duration_seconds=duration_seconds).start()
     running_timers.append(timer)
-    return (
-        f"Startet timer på {timer.pretty_duration}.",
-        dict(running_timers=[timer for timer in running_timers]),
+    synthesise_speech(
+        text=f"Startet timer på {timer.pretty_duration}.",
+        synthesiser=state.get("synthesiser"),
     )
+    return ("", dict(running_timers=[timer for timer in running_timers]))
 
 
 class SetTimerParameters(BaseModel):
@@ -54,7 +56,7 @@ class SetTimerResponse(BaseModel):
 ### Stopping a timer ###
 
 
-def stop_timer(duration: str | None, state: dict) -> tuple[str, dict]:
+def stop_timer(duration: str | None, state: dict) -> tuple[Literal[""], dict]:
     """Stop a timer.
 
     Args:
@@ -71,7 +73,11 @@ def stop_timer(duration: str | None, state: dict) -> tuple[str, dict]:
     running_timers = state.get("running_timers", [])
 
     if not running_timers:
-        return ("Ingen kørende timere.", dict(running_timers=[]))
+        logger.info("No running timers to stop.")
+        synthesise_speech(
+            text="Der er ingen kørende timere.", synthesiser=state.get("synthesiser")
+        )
+        return ("", dict(running_timers=[]))
 
     timer_to_stop: Timer
     if duration is None:
@@ -83,18 +89,23 @@ def stop_timer(duration: str | None, state: dict) -> tuple[str, dict]:
             if str(timer.duration).replace("00:", "0:") == duration.replace("00:", "0:")
         ]
         if not valid_timers:
-            return (
-                f"Ingen timer varighed {duration}.",
-                dict(running_timers=[timer for timer in running_timers]),
+            logger.info(f"No timer found with duration {duration}.")
+            synthesise_speech(
+                text=f"Der var ingen timer med varighed {duration}.",
+                synthesiser=state.get("synthesiser"),
             )
+            return ("", dict(running_timers=[timer for timer in running_timers]))
         timer_to_stop = valid_timers[0]
 
     timer_to_stop.stop()
     running_timers.remove(timer_to_stop)
-    return (
-        f"Timer på {timer_to_stop.pretty_duration} stoppet.",
-        dict(running_timers=[timer for timer in running_timers]),
+
+    logger.info(f"Stopped timer: {timer_to_stop!r}")
+    synthesise_speech(
+        text=f"Stoppet timer på {timer_to_stop.pretty_duration}.",
+        synthesiser=state.get("synthesiser"),
     )
+    return ("", dict(running_timers=[timer for timer in running_timers]))
 
 
 class StopTimerParameters(BaseModel):
@@ -113,7 +124,7 @@ class StopTimerResponse(BaseModel):
 ### List timers ###
 
 
-def list_timers(state: dict) -> tuple[str, dict]:
+def list_timers(state: dict) -> tuple[Literal[""], dict]:
     """List the running timers.
 
     Args:
@@ -126,14 +137,24 @@ def list_timers(state: dict) -> tuple[str, dict]:
     """
     running_timers = state.get("running_timers", [])
     if not running_timers:
-        return "Ingen kørende timere.", state
+        logger.info("No running timers to list.")
+        synthesise_speech(
+            text="Der er ingen kørende timere.", synthesiser=state.get("synthesiser")
+        )
+        return "", state
 
     timers_info = ", ".join(
         f"timer på {timer.pretty_duration} ({timer.pretty_remaining} tilbage)"
         for timer in running_timers
     )
     noun = "timer" if len(running_timers) == 1 else "timere"
-    return f"Der kører {len(running_timers)} {noun}: {timers_info}", state
+
+    logger.info(f"Listing running timers: {timers_info}")
+    synthesise_speech(
+        text=f"Der kører {len(running_timers)} {noun}: {timers_info}",
+        synthesiser=state.get("synthesiser"),
+    )
+    return "", state
 
 
 class ListTimersParameters(BaseModel):
@@ -218,11 +239,18 @@ class Timer:
         hours = timedelta.seconds // 3600
         minutes = (timedelta.seconds % 3600) // 60
         seconds = timedelta.seconds % 60
+        time_strings: list[str] = []
         if hours > 0:
-            return f"{hours} timer, {minutes} minutter og {seconds} sekunder"
+            time_strings.append(f"{hours} timer")
         if minutes > 0:
-            return f"{minutes} minutter og {seconds} sekunder"
-        return f"{seconds} sekunder"
+            time_strings.append(f"{minutes} minutter")
+        if seconds > 0:
+            time_strings.append(f"{seconds} sekunder")
+        return (
+            ", ".join(time_strings[:-1]) + " og " + time_strings[-1]
+            if len(time_strings) > 1
+            else time_strings[0]
+        )
 
     @staticmethod
     def _run_timer(duration_seconds: int) -> None:
@@ -234,4 +262,7 @@ class Timer:
         """
         sleep(duration_seconds)
         logging.info("Timer finished! Announcing it...")
-        synthesise_speech("Beep beep. Beep beep. Tiden er gået!")
+        while True:
+            chime.theme("material")
+            chime.info()
+            sleep(3)

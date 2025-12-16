@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+from .news import GetNewsResponse, get_news
 from .timer import (
     ListTimersResponse,
     SetTimerResponse,
@@ -13,19 +14,14 @@ from .timer import (
 from .weather import GetWeatherResponse, get_weather
 
 
-class NoFunctionCallResponse(BaseModel):
-    """The response when no function is called."""
-
-    answer: str
-
-
 class LLMResponse(BaseModel):
     """The response from the language model."""
 
-    response: (
-        NoFunctionCallResponse
+    answer: (
+        str
         | GetWeatherResponse
         | SetTimerResponse
         | StopTimerResponse
         | ListTimersResponse
+        | GetNewsResponse
     )

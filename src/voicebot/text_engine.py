@@ -12,11 +12,12 @@ from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
+    ChatCompletionToolMessageParam,
     ChatCompletionUserMessageParam,
 )
 
 from . import tools
-from .tools import LLMResponse, NoFunctionCallResponse
+from .tools import LLMResponse
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
@@ -95,13 +96,16 @@ class TextEngine:
         if response_or_null is None:
             logger.info("The response is empty, ignoring it.")
             return None
-        response_obj = response_or_null.response
+        response_obj = response_or_null.answer
 
-        if isinstance(response_obj, NoFunctionCallResponse):
-            response = response_obj.answer
+        if isinstance(response_obj, str):
+            response = response_obj
         else:
             function_name = response_obj.name
-            function_parameters = response_obj.parameters.model_dump()
+            if response_obj.parameters is not None:
+                function_parameters = response_obj.parameters.model_dump()
+            else:
+                function_parameters = dict()
 
             logger.info(
                 f"Using the tool {function_name!r} with parameters "
@@ -113,18 +117,22 @@ class TextEngine:
             self.state.update(state)
             logger.info(f"Tool response: {tool_response!r}")
 
+            if not tool_response:
+                logger.info(
+                    "The tool does not require a response, so we do not continue."
+                )
+                return None
+
             self.conversation.extend(
                 [
-                    ChatCompletionAssistantMessageParam(
-                        role="assistant",
-                        content=f"I want to call the {function_name!r} function with "
-                        f"the parameters {function_parameters!r}.",
+                    ChatCompletionToolMessageParam(
+                        role="tool", tool_call_id=function_name, content=tool_response
                     ),
-                    ChatCompletionUserMessageParam(
-                        role="user",
-                        content=f"The response from the {function_name!r} function is "
-                        f"{tool_response!r}. Now answer the query as "
-                        '{"response": {"answer": your answer}}.',
+                    ChatCompletionSystemMessageParam(
+                        role="system",
+                        content="Brug ovenstående information til at svare på den "
+                        "oprindelige forespørgsel. Brugeren har ikke set ovenstående "
+                        "information, så inkluder de relevante detaljer i dit svar.",
                     ),
                 ]
             )
@@ -138,17 +146,16 @@ class TextEngine:
             if response_or_null is None:
                 logger.info("The response is empty, ignoring it.")
                 return None
-            response_obj = response_or_null.response
-            if not isinstance(response_obj, NoFunctionCallResponse):
-                logger.error(
-                    "The response after using a tool is not a NoFunctionCallResponse."
-                )
+            response = response_or_null.answer
+            if not isinstance(response, str):
+                logger.info("The response after using the tool should be a string.")
                 return None
-            response = response_obj.answer
 
         # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():
-            response = response.replace(before, after)
+            if before in response:
+                logger.info(f"Fixing {before!r} to {after!r} in the response.")
+                response = response.replace(before, after)
 
         self.conversation.append(
             ChatCompletionAssistantMessageParam(role="assistant", content=response)

@@ -20,7 +20,6 @@ wake_word_responses:
   - Hvad så?
   - Halløjsa
   - Halløj
-  - Halløj halløj
   - Davs
   - Hej med dig
   - Hejsa
@@ -50,27 +49,24 @@ system_prompt: >
 
   {tools}
 
-  You will always reply in the format {{"response": your response}}. If any of the
-  functions above would help in replying to your query, then the response will be a JSON
-  dictionary of the form
+  When you use a tool, only you will see the result, so you should not assume that the
+  user has this information available, unless you tell them.
+
+  Your response should be a JSON dictionary of the form:
 
   {{
-    "name": function name,
-    "parameters": JSON dictionary with argument name and its value
-  }}
-
-  Otherwise, the response will be a JSON dictionary of the form
-
-  {{
-    "answer": your answer to the query
+    "answer": your answer to the query if no tool is needed, or otherwise JSON
+      {{
+        "name": function name,
+        "parameters": JSON dictionary with argument name and its value
+      }}
   }}
 tools:
   - type: function
     function:
       name: get_weather
       description: >
-        Get the weather forecast for today and tomorrow, including temperature, rain and
-        wind.
+        The weather forecast for today and tomorrow.
       parameters:
         type: object
         properties:
@@ -81,7 +77,7 @@ tools:
   - type: function
     function:
       name: set_timer
-      description: Set a timer for a given duration.
+      description: Set a timer.
       parameters:
         type: object
         properties:
@@ -92,7 +88,7 @@ tools:
   - type: function
     function:
       name: stop_timer
-      description: Stop the currently running timer.
+      description: Stop a timer.
       parameters:
         type: object
         properties:
@@ -100,11 +96,16 @@ tools:
             type: string
             description: >
               The duration of the timer to stop, in the format 'HH:MM:SS', or null to
-              stop the timer with the shortest duration.
+              stop the timer with the shortest duration. If not specified then default
+              to None.
   - type: function
     function:
       name: list_timers
-      description: List all currently running timers.
+      description: List all timers.
+  - type: function
+    function:
+      name: get_news
+      description: The latest news.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

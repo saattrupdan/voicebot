@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+from functools import cached_property
 
 import onnxruntime as ort
 import openwakeword as oww
@@ -45,14 +46,15 @@ class VoiceBot:
             wakeword_models=["hey_jarvis"], inference_framework="onnx"
         )
 
-        logger.info("Loading the text engine model...")
-        self.text_engine = TextEngine(cfg=self.cfg)
-
         # logger.info("Loading the speech synthesis model...")
         # self.synthesiser = ChatterboxMultilingualTTS.from_pretrained(
         #     device=self.device, repo_id="CoRal-project/tts-base-compatible"
         # )
         self.synthesiser = None
+
+        logger.info("Loading the text engine model...")
+        self.text_engine = TextEngine(cfg=self.cfg)
+        self.text_engine.state["synthesiser"] = self.synthesiser
 
         logger.info("Loading the speech recognition model...")
         self.transcriber: Pipeline = pipeline(
@@ -64,15 +66,17 @@ class VoiceBot:
         logger.info("Loading the punctfix model...")
         self.punct_fixer = PunctFixer(language="da", device=self.device)
 
-    @property
+    @cached_property
     def device(self) -> torch.device:
         """Return the device on which the bot is running."""
         if torch.cuda.is_available():
-            return torch.device("cuda")
+            device = torch.device("cuda")
         elif torch.backends.mps.is_available():
-            return torch.device("mps")
+            device = torch.device("mps")
         else:
-            return torch.device("cpu")
+            device = torch.device("cpu")
+        logger.info(f"Using device: {device}")
+        return device
 
     def run(self) -> None:
         """Run the bot."""
