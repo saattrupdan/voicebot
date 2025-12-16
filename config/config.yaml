@@ -20,7 +20,10 @@ wake_word_responses:
   - Hvad så?
   - Halløjsa
   - Halløj
-  - Hvordan går det?
+  - Halløj halløj
+  - Davs
+  - Hej med dig
+  - Hejsa
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
