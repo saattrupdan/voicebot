@@ -7,7 +7,7 @@ starting_phrase: Hej, så jeg klar. Sig 'Hey Jarvis' for at starte.
 num_seconds_per_chunk: 0.08
 calibrate: false
 calibration_duration: 3.0
-audio_threshold: 100
+audio_threshold: 300
 max_seconds_silence: 2.0
 max_seconds_audio: 10.0
 follow_up_max_seconds: 5.0
