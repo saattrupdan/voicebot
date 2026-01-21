@@ -4,6 +4,7 @@ import logging
 
 import numpy as np
 import torch
+import torch_audiomentations as ta
 from punctfix.inference import PunctFixer
 from transformers.pipelines import Pipeline
 
@@ -32,6 +33,15 @@ def transcribe_speech(
     Returns:
         Transcribed speech.
     """
+    # Convert the integer audio to float
+    if speech.dtype == np.int16:
+        speech = speech.astype(np.float32) / np.iinfo(np.int16).max
+
+    # Normalise the audio
+    speech = ta.PeakNormalization(p=1.0)(
+        torch.tensor(speech).unsqueeze(0).unsqueeze(0), sample_rate=16_000
+    )[0, 0].numpy()
+
     logger.info(f"Transcribing speech of length {speech.shape[0]:,}...")
     with torch.inference_mode():
         transcription_dict = transcriber(inputs=speech)
