@@ -48,7 +48,9 @@ def transcribe_speech(
         assert isinstance(transcription_dict, dict)
         transcription = transcription_dict["text"]
     for before, after in manual_fixes.items():
-        transcription = transcription.replace(before, after)
+        if before in transcription:
+            logger.info(f"Fixing {before!r} to {after!r} in the transcription.")
+            transcription = transcription.replace(before, after)
     transcription = punct_fixer.punctuate(text=transcription)
     logger.info(f"Heard the following: {transcription!r}")
     return transcription
