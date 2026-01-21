@@ -121,7 +121,6 @@ models/*
 **/__pycache__/
 
 .temp.mp3
-.cache
-.cache.sqlite
+**.sqlite
 
 node_modules/
