@@ -26,11 +26,11 @@ wake_word_responses:
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
-asr_model_id: alexandrainst/roest-wav2vec2-315m-100k-steps
+asr_model_id: CoRal-project/roest-whisper-1.5b-v2
 
 # Text engine parameters
 server: http://localhost:1234/v1
-text_model_id: google/gemma-3n-e4b
+text_model_id: openai/gpt-oss-20b
 temperature: 0.6
 min_prompt_length: 5
 system_prompt: >
