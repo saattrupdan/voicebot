@@ -51,8 +51,8 @@ def get_news(state: dict) -> tuple[Literal[""], dict]:
                 pub_date.text, "%a, %d %b %Y %H:%M:%S GMT"
             )
             news_item = NewsItem(
-                title=title.text,
-                description=description.text,
+                title=title.text or "",
+                description=description.text or "",
                 published_at=published_at,
             )
             all_news_items.append(news_item)

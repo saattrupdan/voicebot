@@ -52,14 +52,22 @@ system_prompt: >
   When you use a tool, only you will see the result, so you should not assume that the
   user has this information available, unless you tell them.
 
-  Your response should be a JSON dictionary of the form:
+  If no tool is needed, you return a JSON dictionary of the form:
 
   {{
-    "answer": your answer to the query if no tool is needed, or otherwise JSON
-      {{
-        "name": function name,
-        "parameters": JSON dictionary with argument name and its value
+    "answer": your answer to the query if no tool is needed
+  }}
+
+  If you need to use a tool, you return a JSON dictionary of the form:
+
+  {{
+    "answer": {{
+      "name": function name,
+      "parameters": {{
+        "<argument name>": <argument value>,
+        ...
       }}
+    }}
   }}
 tools:
   - type: function

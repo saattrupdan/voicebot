@@ -130,9 +130,10 @@ class TextEngine:
                     ),
                     ChatCompletionSystemMessageParam(
                         role="system",
-                        content="Brug ovenstående information til at svare på den "
-                        "oprindelige forespørgsel. Brugeren har ikke set ovenstående "
-                        "information, så inkluder de relevante detaljer i dit svar.",
+                        content="Use the above information to answer the original "
+                        "question. The user has not seen the above information, so "
+                        "include relevant details in your response. You must not "
+                        "mention the name of the tool you just used.",
                     ),
                 ]
             )

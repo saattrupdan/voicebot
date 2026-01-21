@@ -75,8 +75,10 @@ def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
         )
 
     openmeteo = Client(
-        session=retry(
-            session=requests_cache.CachedSession(".cache", expire_after=3600),
+        session=retry(  # pyrefly: ignore[bad-argument-type]
+            session=requests_cache.CachedSession(
+                cache_name=f"weather-{location}", expire_after=3600
+            ),
             retries=5,
             backoff_factor=0.2,
         )

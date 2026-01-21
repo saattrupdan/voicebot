@@ -11,34 +11,9 @@ ______________________________________________________________________
 
 Developer:
 
-- Dan Saattrup Smart (saattrupdan@gmail.com)
-
+- Dan Saattrup Smart (<saattrupdan@gmail.com>)
 
 ## Quick Start
 
-### From Docker
-
-Run `make docker` to build a Docker image and run the Docker container.
-
-### From Source
-
 1. Run `make install`, which sets up a virtual environment and all Python dependencies therein.
-2. Run `source .venv/bin/activate` to activate the virtual environment.
-3. (Optional) Run `make install-pre-commit`, which installs pre-commit hooks for linting, formatting and type checking.
-4. Run `python src/scripts/run_bot.py` to start the bot.
-
-
-## All Built-in Commands
-
-The project includes the following convenience commands:
-
-- `make install`: Install the project and its dependencies in a virtual environment.
-- `make install-pre-commit`: Install pre-commit hooks for linting, formatting and type checking.
-- `make lint`: Lint the code using `ruff`.
-- `make format`: Format the code using `ruff`.
-- `make type-check`: Type check the code using `mypy`.
-- `make test`: Run tests using `pytest` and update the coverage badge in the readme.
-- `make docker`: Build a Docker image and run the Docker container.
-- `make docs`: Generate HTML documentation using `pdoc`.
-- `make view-docs`: View the generated HTML documentation in a browser.
-- `make tree`: Show the project structure as a tree.
+2. Run `make bot` to start the bot.
