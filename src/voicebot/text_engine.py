@@ -17,7 +17,7 @@ from openai.types.chat import (
 )
 
 from . import tools
-from .tools import LLMResponse
+from .tools import LLMResponse, NonToolAnswer
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
@@ -98,8 +98,8 @@ class TextEngine:
             return None
         response_obj = response_or_null.answer
 
-        if isinstance(response_obj, str):
-            response = response_obj
+        if isinstance(response_obj, NonToolAnswer):
+            response = response_obj.response
         else:
             function_name = response_obj.name
             if response_obj.parameters is not None:
@@ -147,10 +147,11 @@ class TextEngine:
             if response_or_null is None:
                 logger.info("The response is empty, ignoring it.")
                 return None
-            response = response_or_null.answer
-            if not isinstance(response, str):
-                logger.info("The response after using the tool should be a string.")
+            answer = response_or_null.answer
+            if not isinstance(answer, NonToolAnswer):
+                logger.info("The answer to a tool can't be another tool call.")
                 return None
+            response = answer.response
 
         # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():

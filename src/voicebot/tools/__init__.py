@@ -14,11 +14,17 @@ from .timer import (
 from .weather import GetWeatherResponse, get_weather
 
 
+class NonToolAnswer(BaseModel):
+    """A response that is not a tool call."""
+
+    response: str
+
+
 class LLMResponse(BaseModel):
     """The response from the language model."""
 
     answer: (
-        str
+        NonToolAnswer
         | GetWeatherResponse
         | SetTimerResponse
         | StopTimerResponse

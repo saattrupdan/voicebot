@@ -55,7 +55,9 @@ system_prompt: >
   If no tool is needed, you return a JSON dictionary of the form:
 
   {{
-    "answer": your answer to the query if no tool is needed
+    "answer": {{
+      "response": your answer to the query if no tool is needed
+    }}
   }}
 
   If you need to use a tool, you return a JSON dictionary of the form:
