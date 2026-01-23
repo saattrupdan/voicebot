@@ -2,6 +2,8 @@
 
 import logging
 import os
+import re
+from pathlib import Path
 from typing import Literal
 
 import geocoder
@@ -74,10 +76,18 @@ def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
             f"No location provided, using the current IP location: {location!r}"
         )
 
+    # Ensure that the weather cache directory exists
+    weather_cache = Path(".weather_cache")
+    weather_cache.mkdir(exist_ok=True)
+
+    # Create the cache path
+    cache_name = re.sub(r"[ ,_]+", "-", location).lower()
+    cache_path = weather_cache / cache_name
+
     openmeteo = Client(
         session=retry(  # pyrefly: ignore[bad-argument-type]
             session=requests_cache.CachedSession(
-                cache_name=f"weather-{location}", expire_after=3600
+                cache_name=cache_path.as_posix(), expire_after=3600
             ),
             retries=5,
             backoff_factor=0.2,
