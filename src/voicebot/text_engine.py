@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 
 import openai
 from dotenv import load_dotenv
@@ -155,6 +156,11 @@ class TextEngine:
             final_answer = final_answer.refusal
         elif isinstance(final_answer, ResponseOutputText):
             final_answer = final_answer.text
+
+        # Remove URLs from the response
+        final_answer = re.sub(
+            r"https?://(www\.)[^ ]+", "", final_answer, flags=re.IGNORECASE
+        ).replace("()", "")
 
         # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():
