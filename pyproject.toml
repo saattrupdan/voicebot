@@ -42,8 +42,8 @@ dependencies = [
 pkuseg = ["numpy>=1.25.2"]
 
 [tool.uv.sources]
-chatterbox-tts = { path = "../chatterbox_fork" }
 kenlm = { url = "https://github.com/kpu/kenlm/archive/master.zip" }
+chatterbox-tts = { path = "../chatterbox_fork" }
 
 [project.urls]
 Repository = "https://github.com/saattrupdan/voicebot"
