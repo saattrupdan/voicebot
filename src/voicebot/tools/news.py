@@ -58,12 +58,19 @@ def get_news(state: dict) -> tuple[Literal[""], dict]:
             all_news_items.append(news_item)
 
     all_news_items.sort(key=lambda x: x.published_at, reverse=True)
-    all_news_items = all_news_items[:5]
+
+    # Take the top-5 news items, ignoring duplicates
+    top_news_items = []
+    for news in all_news_items:
+        if news.title not in [item.title for item in top_news_items]:
+            top_news_items.append(news)
+        if len(top_news_items) >= 5:
+            break
 
     logger.info("Reading out the latest news headlines...")
     synthesise_speech(text="Her er seneste nyt.", synthesiser=state.get("synthesiser"))
 
-    for news in all_news_items:
+    for news in top_news_items:
         chime.theme("pokemon")
         chime.info()
         sleep(0.5)
