@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from openai.types.responses import (
     ResponseInputItemParam,
     ResponseOutputMessage,
+    ResponseOutputMessageParam,
     ResponseOutputRefusal,
     ResponseOutputText,
 )
@@ -108,6 +109,22 @@ class TextEngine:
                             type="function_call_output",
                             call_id=item.call_id,
                             output=json.dumps({item.name: tool_response}),
+                        )
+                    )
+                else:
+                    self.conversation.append(
+                        ResponseOutputMessageParam(  # pyrefly: ignore
+                            role="assistant",
+                            type="message",
+                            status="completed",
+                            content=[
+                                ResponseOutputText(
+                                    type="output_text",
+                                    annotations=[],
+                                    logprobs=[],
+                                    text="",
+                                )
+                            ],
                         )
                     )
 
