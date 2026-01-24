@@ -116,6 +116,17 @@ tools:
     function:
       name: get_news
       description: The latest news.
+  - type: function
+    function:
+      name: search_web
+      description: Search the web for a given query.
+      parameters:
+        type: object
+        properties:
+          keywords:
+            type: string
+            description: >
+              The keywords to search for.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

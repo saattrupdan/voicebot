@@ -12,6 +12,7 @@ from .timer import (
     stop_timer,
 )
 from .weather import GetWeatherResponse, get_weather
+from .web_search import SearchWebParameters, SearchWebResponse, search_web
 
 
 class NonToolAnswer(BaseModel):
@@ -30,4 +31,5 @@ class LLMResponse(BaseModel):
         | StopTimerResponse
         | ListTimersResponse
         | GetNewsResponse
+        | SearchWebResponse
     )

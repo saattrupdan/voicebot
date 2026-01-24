@@ -35,6 +35,7 @@ dependencies = [
   "pyctcdecode>=0.5.0",
   "chime>=0.7.0",
   "torch-audiomentations>=0.12.0",
+  "webscout>=2026.1.22",
 ]
 
 [tool.uv.extra-build-dependencies]
