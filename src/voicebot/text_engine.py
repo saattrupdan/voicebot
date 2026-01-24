@@ -11,7 +11,6 @@ from omegaconf import DictConfig, OmegaConf
 from openai.types.responses import (
     ResponseInputItemParam,
     ResponseOutputMessage,
-    ResponseOutputMessageParam,
     ResponseOutputRefusal,
     ResponseOutputText,
 )
@@ -116,21 +115,18 @@ class TextEngine:
                         )
                     )
                 else:
-                    self.conversation.append(
-                        ResponseOutputMessageParam(  # pyrefly: ignore
-                            role="assistant",
-                            type="message",
-                            status="completed",
-                            content=[
-                                ResponseOutputText(
-                                    type="output_text",
-                                    annotations=[],
-                                    logprobs=[],
-                                    text="",
-                                )
-                            ],
-                        )
+                    final_response = ResponseOutputMessage(
+                        id="",
+                        role="assistant",
+                        type="message",
+                        status="completed",
+                        content=[
+                            ResponseOutputText(
+                                type="output_text", annotations=[], logprobs=[], text=""
+                            )
+                        ],
                     )
+                    self.conversation.append(final_response)  # pyrefly: ignore
 
         # If we called a tool, we need to call the LLM again to get the final response
         if needs_followup:
