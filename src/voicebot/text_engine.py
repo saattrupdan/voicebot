@@ -94,12 +94,14 @@ class TextEngine:
         needs_followup = False
         for item in llm_answer.output:
             if item.type == "function_call":
+                arguments = {
+                    key: value for key, value in json.loads(item.arguments) if key != ""
+                }
                 logger.info(
-                    f"Using the tool {item.name!r} with parameters "
-                    f"{item.arguments!r}..."
+                    f"Using the tool {item.name!r} with parameters {arguments!r}..."
                 )
                 tool_response, state = getattr(tool_module, item.name)(
-                    state=self.state, **json.loads(item.arguments)
+                    state=self.state, **arguments
                 )
                 logger.info(f"Tool {item.name!r} response: {tool_response!r}")
                 if tool_response:
