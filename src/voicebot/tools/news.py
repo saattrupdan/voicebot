@@ -85,7 +85,7 @@ def get_news(state: dict) -> tuple[Literal[""], dict]:
     )
     logger.info("Finished reading the news.")
 
-    return "", dict()
+    return "", state
 
 
 class NewsItem(BaseModel):

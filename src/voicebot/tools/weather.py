@@ -147,4 +147,4 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
             out += f"{interval_name}: {interval_values}\n"
         out += "\n"
 
-    return out, dict()
+    return out, state

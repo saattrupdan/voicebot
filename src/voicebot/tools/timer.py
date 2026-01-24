@@ -33,10 +33,7 @@ def set_timer(state: dict, duration_seconds: int) -> tuple[Literal[""], dict]:
         text=f"Startet timer på {timer.pretty_duration}.",
         synthesiser=state.get("synthesiser"),
     )
-    return ("", dict(running_timers=[timer for timer in running_timers]))
-
-
-### Stopping a timer ###
+    return "", dict(running_timers=[timer for timer in running_timers])
 
 
 def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], dict]:
@@ -88,7 +85,7 @@ def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], d
         text=f"Stoppet timer på {timer_to_stop.pretty_duration}.",
         synthesiser=state.get("synthesiser"),
     )
-    return ("", dict(running_timers=[timer for timer in running_timers]))
+    return "", dict(running_timers=[timer for timer in running_timers])
 
 
 def list_timers(state: dict) -> tuple[Literal[""], dict]:

@@ -105,8 +105,8 @@ class TextEngine:
                 tool_response, state = getattr(tool_module, item.name)(
                     state=self.state, **arguments
                 )
-                logger.info(f"Tool {item.name!r} response: {tool_response!r}")
                 if tool_response:
+                    logger.info(f"Tool {item.name!r} response: {tool_response!r}")
                     needs_followup = True
                     self.conversation.append(
                         dict(
@@ -168,5 +168,7 @@ class TextEngine:
                 logger.info(f"Fixing {before!r} to {after!r} in the response.")
                 final_answer = final_answer.replace(before, after)
 
-        logger.info(f"Generated the response: {final_answer!r}")
+        if final_answer:
+            logger.info(f"Generated the response: {final_answer!r}")
+
         return final_answer
