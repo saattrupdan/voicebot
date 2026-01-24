@@ -100,8 +100,7 @@ tools:
     name: search_web
     description: >
       Search the web for a given query. Use this whenever you need to answer trivia-like
-      questions. When you get a response, you should mention the source of the
-      information.
+      questions. Always mention the source of the information.
     parameters:
       type: object
       properties:

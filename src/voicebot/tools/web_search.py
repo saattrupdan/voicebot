@@ -1,8 +1,7 @@
 """Search the web for a given query."""
 
-import typing as t
+import json
 
-from pydantic import BaseModel
 from webscout import DuckDuckGoSearch, TextResult
 
 
@@ -22,20 +21,4 @@ def search_web(state: dict, keywords: str) -> tuple[str, dict]:
     results: list[TextResult] = DuckDuckGoSearch().text(
         keywords=keywords, max_results=10
     )
-    result_str: str = "\n\n".join(
-        f"# {result.title}\n\n{result.body}" for result in results
-    )
-    return result_str, state
-
-
-class SearchWebParameters(BaseModel):
-    """The parameters for the search_web function."""
-
-    keywords: str
-
-
-class SearchWebResponse(BaseModel):
-    """A response containing the web results."""
-
-    name: t.Literal["search_web"]
-    parameters: SearchWebParameters
+    return json.dumps([result.to_dict() for result in results]), state
