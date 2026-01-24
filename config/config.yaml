@@ -98,7 +98,10 @@ tools:
   - type: function
     strict: true
     name: search_web
-    description: Search the web for a given query.
+    description: >
+      Search the web for a given query. Use this whenever you need to answer trivia-like
+      questions. When you get a response, you should mention the source of the
+      information.
     parameters:
       type: object
       properties:
