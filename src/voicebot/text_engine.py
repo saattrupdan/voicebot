@@ -8,16 +8,14 @@ import os
 import openai
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionMessageParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionToolMessageParam,
-    ChatCompletionUserMessageParam,
+from openai.types.responses import (
+    ResponseInputItemParam,
+    ResponseOutputMessage,
+    ResponseOutputRefusal,
+    ResponseOutputText,
 )
 
-from . import tools
-from .tools import LLMResponse, NonToolAnswer
+from . import tools as tool_module
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
@@ -38,7 +36,7 @@ class TextEngine:
         self.client = openai.OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "not-set"), base_url=cfg.server
         )
-        self.conversation: list[ChatCompletionMessageParam] = list()
+        self.conversation: list[ResponseInputItemParam] = list()
         self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)  # type: ignore[bad-assignment]
         self.state: dict = dict()
 
@@ -76,91 +74,76 @@ class TextEngine:
                 month=MONTHS[dt.datetime.now().month - 1],
                 year=dt.datetime.now().year,
                 time=dt.datetime.now().strftime("%H:%M"),
-                tools="\n".join([json.dumps(tool, indent=4) for tool in self.tools]),
             )
-            self.conversation = [
-                ChatCompletionSystemMessageParam(role="system", content=system_prompt)
-            ]
+            self.conversation = [dict(role="system", content=system_prompt)]
 
-        self.conversation.append(
-            ChatCompletionUserMessageParam(role="user", content=prompt)
+        self.conversation.append(dict(role="user", content=prompt))
+
+        llm_answer = (
+            self.client.responses.create(  # pyrefly: ignore[no-matching-overload]
+                model=str(self.cfg.text_model_id),
+                input=self.conversation,
+                temperature=float(self.cfg.temperature),
+                tools=self.tools,
+            )
         )
+        self.conversation.extend(llm_answer.output)
 
-        llm_answer = self.client.beta.chat.completions.parse(
-            model=self.cfg.text_model_id,
-            messages=self.conversation,
-            temperature=self.cfg.temperature,
-            response_format=LLMResponse,
-        )
-        response_or_null = llm_answer.choices[0].message.parsed
-        if response_or_null is None:
-            logger.info("The response is empty, ignoring it.")
-            return None
-        response_obj = response_or_null.answer
-
-        if isinstance(response_obj, NonToolAnswer):
-            response = response_obj.response
-        else:
-            function_name = response_obj.name
-            if response_obj.parameters is not None:
-                function_parameters = response_obj.parameters.model_dump()
-            else:
-                function_parameters = dict()
-
-            logger.info(
-                f"Using the tool {function_name!r} with parameters "
-                f"{function_parameters!r}..."
-            )
-            tool_response, state = getattr(tools, function_name)(
-                state=self.state, **function_parameters
-            )
-            self.state.update(state)
-            logger.info(f"Tool response: {tool_response!r}")
-
-            if not tool_response:
+        # Call any tools that were requested
+        needs_followup = False
+        for item in llm_answer.output:
+            if item.type == "function_call":
                 logger.info(
-                    "The tool does not require a response, so we do not continue."
+                    f"Using the tool {item.name!r} with parameters "
+                    f"{item.arguments!r}..."
                 )
-                return None
+                tool_response, state = getattr(tool_module, item.name)(
+                    state=self.state, **json.loads(item.arguments)
+                )
+                logger.info(f"Tool {item.name!r} response: {tool_response!r}")
+                if tool_response:
+                    needs_followup = True
+                    self.conversation.append(
+                        dict(
+                            type="function_call_output",
+                            call_id=item.call_id,
+                            output=json.dumps({item.name: tool_response}),
+                        )
+                    )
 
-            self.conversation.extend(
-                [
-                    ChatCompletionToolMessageParam(
-                        role="tool", tool_call_id=function_name, content=tool_response
+        # If we called a tool, we need to call the LLM again to get the final response
+        if needs_followup:
+            llm_answer = (
+                self.client.responses.create(  # pyrefly: ignore[no-matching-overload]
+                    model=self.cfg.text_model_id,
+                    input=self.conversation,
+                    instructions=(
+                        "Respond only with an answer to the user's question, based on "
+                        "the information provided by the tools."
                     ),
-                    ChatCompletionSystemMessageParam(
-                        role="system",
-                        content="Use the above information to answer the original "
-                        "question. The user has not seen the above information, so "
-                        "include relevant details in your response. You must not "
-                        "mention the name of the tool you just used.",
-                    ),
-                ]
+                    temperature=self.cfg.temperature,
+                    tools=self.tools,
+                )
             )
-            llm_answer = self.client.beta.chat.completions.parse(
-                model=self.cfg.text_model_id,
-                messages=self.conversation,
-                temperature=self.cfg.temperature,
-                response_format=LLMResponse,
-            )
-            response_or_null = llm_answer.choices[0].message.parsed
-            if response_or_null is None:
-                logger.info("The response is empty, ignoring it.")
-                return None
-            answer = response_or_null.answer
-            if not isinstance(answer, NonToolAnswer):
-                logger.info("The answer to a tool can't be another tool call.")
-                return None
-            response = answer.response
+            self.conversation.extend(llm_answer.output)
+
+        # Extract the final answer
+        final_response = self.conversation[-1]
+        assert isinstance(final_response, ResponseOutputMessage), (
+            "The final response is not a ResponseOutputMessage, it's a "
+            f"{type(final_response)}"
+        )
+        final_answer = final_response.content[0]
+        if isinstance(final_answer, ResponseOutputRefusal):
+            final_answer = final_answer.refusal
+        elif isinstance(final_answer, ResponseOutputText):
+            final_answer = final_answer.text
 
         # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():
-            if before in response:
+            if before in final_answer:
                 logger.info(f"Fixing {before!r} to {after!r} in the response.")
-                response = response.replace(before, after)
+                final_answer = final_answer.replace(before, after)
 
-        self.conversation.append(
-            ChatCompletionAssistantMessageParam(role="assistant", content=response)
-        )
-        logger.info(f"Generated the response: {response!r}")
-        return response
+        logger.info(f"Generated the response: {final_answer!r}")
+        return final_answer

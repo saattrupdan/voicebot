@@ -4,13 +4,11 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Literal
 
 import geocoder
 import numpy as np
 import requests_cache
 from openmeteo_requests import Client
-from pydantic import BaseModel
 from retry_requests import retry
 
 from ..utils import is_internet_available
@@ -53,15 +51,15 @@ WEATHER_CODES = {
 }
 
 
-def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
+def get_weather(state: dict, location: str) -> tuple[str, dict]:
     """Get the weather forecast for today.
 
     Args:
-        location:
-            The location to get the weather forecast for. Can be None to use the
-            current IP location.
         state:
             The current state of the text engine.
+        location:
+            The location to get the weather forecast for. Can be an empty string to use
+            the current IP location.
 
     Returns:
         A pair (message, state) where message is the weather forecast and state is
@@ -70,7 +68,7 @@ def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
     if not is_internet_available():
         return "Ingen vejrudsigt, da internettet ikke er tilgængeligt.", dict()
 
-    if location is None:
+    if location == "":
         location = geocoder.ip("me").address
         logger.info(
             f"No location provided, using the current IP location: {location!r}"
@@ -150,16 +148,3 @@ def get_weather(location: str | None, state: dict) -> tuple[str, dict]:
         out += "\n"
 
     return out, dict()
-
-
-class GetWeatherParameters(BaseModel):
-    """The parameters for the get_weather function."""
-
-    location: str | None
-
-
-class GetWeatherResponse(BaseModel):
-    """A response containing the weather forecast."""
-
-    name: Literal["get_weather"]
-    parameters: GetWeatherParameters

@@ -6,14 +6,14 @@ from pydantic import BaseModel
 from webscout import DuckDuckGoSearch, TextResult
 
 
-def search_web(keywords: str, state: dict) -> tuple[str, dict]:
+def search_web(state: dict, keywords: str) -> tuple[str, dict]:
     """Search the web for a given query.
 
     Args:
-        keywords:
-            The keywords to search for.
         state:
             The current state of the text engine.
+        keywords:
+            The keywords to search for.
 
     Returns:
         A tuple (message, state) where message is a message with all the web results and

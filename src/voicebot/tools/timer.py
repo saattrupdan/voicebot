@@ -7,24 +7,20 @@ from time import sleep
 from typing import Literal
 
 import chime
-from pydantic import BaseModel
 
 from ..speech_synthesis import synthesise_speech
 
 logger = logging.getLogger(__name__)
 
 
-### Setting a timer ###
-
-
-def set_timer(duration_seconds: int, state: dict) -> tuple[Literal[""], dict]:
+def set_timer(state: dict, duration_seconds: int) -> tuple[Literal[""], dict]:
     """Set a timer for the given duration.
 
     Args:
-        duration_seconds:
-            The duration of the timer in seconds.
         state:
             The current state of the text engine.
+        duration_seconds:
+            The duration of the timer in seconds.
 
     Returns:
         A pair (message, state) where message is a message indicating the timer
@@ -40,31 +36,18 @@ def set_timer(duration_seconds: int, state: dict) -> tuple[Literal[""], dict]:
     return ("", dict(running_timers=[timer for timer in running_timers]))
 
 
-class SetTimerParameters(BaseModel):
-    """The parameters for setting a timer."""
-
-    duration_seconds: int
-
-
-class SetTimerResponse(BaseModel):
-    """A response containing the timer duration."""
-
-    name: Literal["set_timer"]
-    parameters: SetTimerParameters
-
-
 ### Stopping a timer ###
 
 
-def stop_timer(duration: str | None, state: dict) -> tuple[Literal[""], dict]:
+def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], dict]:
     """Stop a timer.
 
     Args:
-        duration:
-            The duration of the timer to stop. If None, stop the timer with the
-            shortest duration.
         state:
             The current state of the text engine.
+        duration (optional):
+            The duration of the timer to stop. If None, stop the timer with the
+            shortest duration. Defaults to None.
 
     Returns:
         A pair (message, state) where message is a message indicating the timer
@@ -108,22 +91,6 @@ def stop_timer(duration: str | None, state: dict) -> tuple[Literal[""], dict]:
     return ("", dict(running_timers=[timer for timer in running_timers]))
 
 
-class StopTimerParameters(BaseModel):
-    """The parameters for stopping a timer."""
-
-    duration: str | None
-
-
-class StopTimerResponse(BaseModel):
-    """A response containing the stopped timer duration."""
-
-    name: Literal["stop_timer"]
-    parameters: StopTimerParameters
-
-
-### List timers ###
-
-
 def list_timers(state: dict) -> tuple[Literal[""], dict]:
     """List the running timers.
 
@@ -155,22 +122,6 @@ def list_timers(state: dict) -> tuple[Literal[""], dict]:
         synthesiser=state.get("synthesiser"),
     )
     return "", state
-
-
-class ListTimersParameters(BaseModel):
-    """The parameters for listing timers."""
-
-    pass
-
-
-class ListTimersResponse(BaseModel):
-    """A response containing the list of running timers."""
-
-    name: Literal["list_timers"]
-    parameters: ListTimersParameters
-
-
-### Timer class ###
 
 
 class Timer:

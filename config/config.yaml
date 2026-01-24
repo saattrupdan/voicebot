@@ -23,6 +23,7 @@ wake_word_responses:
   - Davs
   - Hej med dig
   - Hejsa
+  - Halløjhalløj
 wake_word_seconds: 1.5
 
 # Speech recognition parameters
@@ -44,89 +45,69 @@ system_prompt: >
 
   Today is {weekday}, {month} {day} {year} and the time is {time} (in 24-hour
   format), but you don't need to say that.
-
-  You have the following functions available to you:
-
-  {tools}
-
-  When you use a tool, only you will see the result, so you should not assume that the
-  user has this information available, unless you tell them.
-
-  If no tool is needed, you return a JSON dictionary of the form:
-
-  {{
-    "answer": {{
-      "response": your answer to the query if no tool is needed
-    }}
-  }}
-
-  If you need to use a tool, you return a JSON dictionary of the form:
-
-  {{
-    "answer": {{
-      "name": function name,
-      "parameters": {{
-        "<argument name>": <argument value>,
-        ...
-      }}
-    }}
-  }}
 tools:
   - type: function
-    function:
-      name: get_weather
-      description: >
-        The weather forecast for today and tomorrow.
-      parameters:
-        type: object
-        properties:
-          location:
-            type: string
-            description: >
-              The city to get the weather for, or null to use the current location.
+    strict: true
+    name: get_weather
+    description: >
+      The weather forecast for today and tomorrow.
+    parameters:
+      type: object
+      properties:
+        location:
+          type: string
+          description: >
+            The city to get the weather for, or an empty string to use the current
+            location.
+      required:
+        - location
   - type: function
-    function:
-      name: set_timer
-      description: Set a timer.
-      parameters:
-        type: object
-        properties:
-          duration_seconds:
-            type: number
-            description: >
-              The duration of the timer in seconds.
+    strict: true
+    name: set_timer
+    description: Set a timer.
+    parameters:
+      type: object
+      properties:
+        duration_seconds:
+          type: number
+          description: >
+            The duration of the timer in seconds.
+      required:
+        - duration_seconds
   - type: function
-    function:
-      name: stop_timer
-      description: Stop a timer.
-      parameters:
-        type: object
-        properties:
-          duration:
-            type: string
-            description: >
-              The duration of the timer to stop, in the format 'HH:MM:SS', or null to
-              stop the timer with the shortest duration. If not specified then default
-              to None.
+    strict: true
+    name: stop_timer
+    description: Stop a timer.
+    parameters:
+      type: object
+      properties:
+        duration:
+          type: string
+          description: >
+            The duration of the timer to stop, in the format 'HH:MM:SS', or null to
+            stop the timer with the shortest duration. If not specified then default
+            to None.
   - type: function
-    function:
-      name: list_timers
-      description: List all timers.
+    strict: true
+    name: list_timers
+    description: List all timers.
   - type: function
-    function:
-      name: get_news
-      description: The latest news.
+    strict: true
+    name: get_news
+    description: The latest news.
   - type: function
-    function:
-      name: search_web
-      description: Search the web for a given query.
-      parameters:
-        type: object
-        properties:
-          keywords:
-            type: string
-            description: >
-              The keywords to search for.
+    strict: true
+    name: search_web
+    description: Search the web for a given query.
+    parameters:
+      type: object
+      properties:
+        keywords:
+          type: string
+          description: >
+            The keywords to search for.
+      required:
+        - keywords
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

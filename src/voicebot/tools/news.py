@@ -87,10 +87,3 @@ class NewsItem(BaseModel):
     title: str
     description: str
     published_at: dt.datetime
-
-
-class GetNewsResponse(BaseModel):
-    """A response containing the latest news."""
-
-    name: Literal["get_news"]
-    parameters: None
