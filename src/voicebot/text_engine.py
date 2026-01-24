@@ -95,7 +95,9 @@ class TextEngine:
         for item in llm_answer.output:
             if item.type == "function_call":
                 arguments = {
-                    key: value for key, value in json.loads(item.arguments) if key != ""
+                    key: value
+                    for key, value in json.loads(item.arguments).items()
+                    if key != ""
                 }
                 logger.info(
                     f"Using the tool {item.name!r} with parameters {arguments!r}..."
