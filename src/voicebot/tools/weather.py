@@ -75,8 +75,8 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
         )
 
     # Ensure that the weather cache directory exists
-    weather_cache = Path(".weather_cache")
-    weather_cache.mkdir(exist_ok=True)
+    weather_cache = Path(".cache", "weather")
+    weather_cache.mkdir(exist_ok=True, parents=True)
 
     # Create the cache path
     cache_name = re.sub(r"[ ,_]+", "-", location).lower()
