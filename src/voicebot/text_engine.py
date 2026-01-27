@@ -102,7 +102,7 @@ class TextEngine:
                 logger.info(
                     f"Using the tool {item.name!r} with parameters {arguments!r}..."
                 )
-                tool_response, state = getattr(tool_module, item.name)(
+                tool_response, self.state = getattr(tool_module, item.name)(
                     state=self.state, **arguments
                 )
                 if tool_response:
