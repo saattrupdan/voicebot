@@ -24,10 +24,11 @@ wake_word_responses:
   - Hej med dig
   - Hejsa
   - Halløjhalløj
-wake_word_seconds: 1.5
+wake_word_seconds: 1.0
 
 # Speech recognition parameters
-asr_model_id: CoRal-project/roest-whisper-1.5b-v2
+# asr_model_id: CoRal-project/roest-whisper-1.5b-v2
+asr_model_id: CoRal-project/roest-wav2vec2-315m-v3
 
 # Text engine parameters
 server: http://localhost:1234/v1
@@ -42,6 +43,8 @@ system_prompt: >
   You will get a transcription of what the user said, so there will usually be spelling
   and grammar mistakes. You should try to understand what the user meant, and just
   pretend that that's what they said.
+
+  If a tool is potentially relevant to the user's query, you should always call it.
 
   Today is {weekday}, {month} {day} {year} and the time is {time} (in 24-hour
   format), but you don't need to say that.
