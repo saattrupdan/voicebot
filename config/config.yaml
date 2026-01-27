@@ -110,6 +110,10 @@ tools:
             The keywords to search for.
       required:
         - keywords
+  - type: function
+    strict: true
+    name: meow
+    description: Make a meow sound.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:
