@@ -5,7 +5,7 @@ defaults:
 # Speech recording parameters
 starting_phrase: Hej, så jeg klar. Sig 'Hey Jarvis' for at starte.
 num_seconds_per_chunk: 0.08
-calibrate: false
+calibrate: true
 calibration_duration: 3.0
 audio_threshold: 300
 max_seconds_silence: 2.0
