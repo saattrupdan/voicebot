@@ -113,7 +113,7 @@ tools:
   - type: function
     strict: true
     name: meow
-    description: Make a meow sound.
+    description: Make a meow cat sound.
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

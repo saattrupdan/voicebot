@@ -22,10 +22,7 @@ def meow(state: dict) -> tuple[str, dict]:
     cache_path = cache_dir / "cat-sound.mp3"
 
     if not cache_path.exists():
-        response = httpx.get(
-            "https://cataas.com/cat/says/meow?size=50&color=red&json=true",
-            params=dict(filename="cute-cat-meow-472372.mp3"),
-        )
+        response = httpx.get("https://filedn.com/lRBwPhPxgV74tO0rDoe8SpH/cat-meow.mp3")
         if response.status_code != 200:
             return (
                 "Kunne desværre ikke miaue rigtigt, men her kommer et forsøg: Miaauu!",
@@ -34,5 +31,5 @@ def meow(state: dict) -> tuple[str, dict]:
         with open(cache_path, "wb") as f:
             f.write(response.content)
 
-    playsound(sound=cache_path.as_posix())
+    playsound(sound=cache_path)
     return "", state
