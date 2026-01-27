@@ -68,14 +68,17 @@ def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], d
             for timer in running_timers
             if str(timer.duration).replace("00:", "0:") == duration.replace("00:", "0:")
         ]
-        if not valid_timers:
+        if not valid_timers and running_timers:
+            timer_to_stop = min(running_timers, key=lambda t: t.duration)
+        elif not valid_timers:
             logger.info(f"No timer found with duration {duration}.")
             synthesise_speech(
                 text=f"Der var ingen timer med varighed {duration}.",
                 synthesiser=state.get("synthesiser"),
             )
             return ("", dict(running_timers=[timer for timer in running_timers]))
-        timer_to_stop = valid_timers[0]
+        else:
+            timer_to_stop = valid_timers[0]
 
     timer_to_stop.stop()
     running_timers.remove(timer_to_stop)
