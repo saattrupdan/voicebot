@@ -17,12 +17,10 @@ def meow(state: dict) -> tuple[str, dict]:
         A tuple (message, state) where message is a message indicating the sound has
         been played and state is information that the text engine should store.
     """
-    # Get the cache path
     cache_dir = Path(".cache", "cat")
     cache_dir.mkdir(exist_ok=True, parents=True)
     cache_path = cache_dir / "cat-sound.mp3"
 
-    # If the sound hasn't been downloaded yet then do it
     if not cache_path.exists():
         response = httpx.get(
             "https://cataas.com/cat/says/meow?size=50&color=red&json=true",
@@ -36,7 +34,5 @@ def meow(state: dict) -> tuple[str, dict]:
         with open(cache_path, "wb") as f:
             f.write(response.content)
 
-    # Play the sound
     playsound(sound=cache_path.as_posix())
-
     return "", state
