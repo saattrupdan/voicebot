@@ -102,9 +102,19 @@ class TextEngine:
                 logger.info(
                     f"Using the tool {item.name!r} with parameters {arguments!r}..."
                 )
-                tool_response, self.state = getattr(tool_module, item.name)(
-                    state=self.state, **arguments
-                )
+                try:
+                    tool_response, self.state = getattr(tool_module, item.name)(
+                        state=self.state, **arguments
+                    )
+                except TypeError as e:
+                    logger.error(f"Error calling tool {item.name!r}: {e}")
+                    logger.info(
+                        f"Trying to use the tool {item.name!r} without arguments..."
+                    )
+                    tool_response, self.state = getattr(tool_module, item.name)(
+                        state=self.state
+                    )
+
                 if tool_response:
                     logger.info(f"Tool {item.name!r} response: {tool_response!r}")
                     needs_followup = True
