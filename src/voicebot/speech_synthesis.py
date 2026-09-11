@@ -1,56 +1,80 @@
 """Generation of Danish speech."""
 
-import os
 import tempfile
+import wave
 from pathlib import Path
 
-import torchaudio
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-from pydub import AudioSegment
-from pydub.playback import play
+import numpy as np
+import openai
+import sounddevice
 
 
-def synthesise_speech(
-    text: str, synthesiser: ChatterboxMultilingualTTS | None = None
-) -> None:
-    """Synthesise speech from text.
+class SpeechSynthesiser:
+    """A speech synthesiser backed by the SYV audio API."""
+
+    def __init__(self, client: openai.OpenAI, model: str, voice: str) -> None:
+        """Initialise the speech synthesiser.
+
+        Args:
+            client:
+                OpenAI-compatible client configured for the SYV API.
+            model:
+                Speech synthesis model identifier.
+            voice:
+                Voice identifier supported by the model.
+        """
+        self.client = client
+        self.model = model
+        self.voice = voice
+
+    def synthesise(self, text: str) -> None:
+        """Generate and play speech.
+
+        Args:
+            text:
+                Text to synthesise.
+        """
+        response = self.client.audio.speech.create(
+            model=self.model, input=text, voice=self.voice, response_format="wav"
+        )
+        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
+            wav_file.write(response.content)
+            wav_file.flush()
+            play_sound(path=wav_file.name)
+
+
+def synthesise_speech(text: str, synthesiser: SpeechSynthesiser | None) -> None:
+    """Synthesise and play speech.
 
     Args:
         text:
-            Text to be spoken.
-        synthesiser (optional):
-            The speech synthesiser to use. Can be None to just use the MacOS `say`
-            command.
+            Text to synthesise.
+        synthesiser:
+            Speech synthesiser to use, or None to produce no speech.
     """
-    if synthesiser is None:
-        cleaned_text = text.replace('"', "'")
-        os.system(f'say "{cleaned_text}"')
-        return
-
-    generated_speech = synthesiser.generate(
-        text=text, language_id="da", audio_prompt_path="mic.wav"
-    )
-    with tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav_file:
-        torchaudio.save(
-            uri=temp_wav_file.name,
-            src=generated_speech.cpu(),
-            sample_rate=synthesiser.sr,
-        )
-        play_sound(path=temp_wav_file.name)
+    if synthesiser is not None:
+        synthesiser.synthesise(text=text)
 
 
 def play_sound(path: str | Path) -> None:
-    """Play a sound file.
+    """Play a WAV file.
 
     Args:
-        path: The path to the sound file.
+        path:
+            Path to the WAV file.
     """
     path = Path(path)
-    match path.suffix.lower():
-        case ".wav":
-            audio = AudioSegment.from_wav(str(path))
-        case ".mp3":
-            audio = AudioSegment.from_mp3(str(path))
-        case _:
-            raise ValueError(f"Unknown file extension: {path.suffix!r}")
-    play(audio)
+    if path.suffix.lower() != ".wav":
+        raise ValueError(f"Unknown file extension: {path.suffix!r}")
+
+    with wave.open(str(path), "rb") as wav_file:
+        if wav_file.getsampwidth() != 2:
+            raise ValueError("Only 16-bit WAV audio is supported.")
+        sample_rate = wav_file.getframerate()
+        num_channels = wav_file.getnchannels()
+        audio = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype="<i2")
+
+    if num_channels > 1:
+        audio = audio.reshape(-1, num_channels)
+    sounddevice.play(data=audio, samplerate=sample_rate)
+    sounddevice.wait()

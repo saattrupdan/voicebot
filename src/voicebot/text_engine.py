@@ -5,22 +5,20 @@ import json
 import logging
 import os
 import re
+import typing as t
 
 import openai
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from openai.types.responses import (
-    ResponseInputItemParam,
-    ResponseOutputMessage,
-    ResponseOutputRefusal,
-    ResponseOutputText,
-)
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from . import tools as tool_module
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+MAX_TOOL_STEPS = 5
 
 
 class TextEngine:
@@ -35,10 +33,11 @@ class TextEngine:
         """
         self.cfg = cfg
         self.client = openai.OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", "not-set"), base_url=cfg.server
+            api_key=os.environ["MELIOUS_API_KEY"], base_url=cfg.text_server
         )
-        self.conversation: list[ResponseInputItemParam] = list()
-        self.tools: list[dict] = OmegaConf.to_object(self.cfg.tools)  # type: ignore[bad-assignment]
+        self.conversation: list[ChatCompletionMessageParam] = list()
+        raw_tools = t.cast(list[dict[str, object]], OmegaConf.to_object(self.cfg.tools))
+        self.tools = self._format_tools(tools=raw_tools)
         self.state: dict = dict()
 
     def generate_response(
@@ -79,100 +78,12 @@ class TextEngine:
             self.conversation = [dict(role="system", content=system_prompt)]
 
         self.conversation.append(dict(role="user", content=prompt))
+        final_answer = self._complete_conversation()
 
-        llm_answer = (
-            self.client.responses.create(  # pyrefly: ignore[no-matching-overload]
-                model=str(self.cfg.text_model_id),
-                input=self.conversation,
-                temperature=float(self.cfg.temperature),
-                tools=self.tools,
-            )
-        )
-        self.conversation.extend(llm_answer.output)
-
-        # Call any tools that were requested
-        needs_followup = False
-        for item in llm_answer.output:
-            if item.type == "function_call":
-                arguments = {
-                    key: value
-                    for key, value in json.loads(item.arguments).items()
-                    if key != ""
-                }
-                logger.info(
-                    f"Using the tool {item.name!r} with parameters {arguments!r}..."
-                )
-                try:
-                    tool_response, self.state = getattr(tool_module, item.name)(
-                        state=self.state, **arguments
-                    )
-                except TypeError as e:
-                    logger.error(f"Error calling tool {item.name!r}: {e}")
-                    logger.info(
-                        f"Trying to use the tool {item.name!r} without arguments..."
-                    )
-                    tool_response, self.state = getattr(tool_module, item.name)(
-                        state=self.state
-                    )
-
-                if tool_response:
-                    logger.info(f"Tool {item.name!r} response: {tool_response!r}")
-                    needs_followup = True
-                    self.conversation.append(
-                        dict(
-                            type="function_call_output",
-                            call_id=item.call_id,
-                            output=json.dumps({item.name: tool_response}),
-                        )
-                    )
-                else:
-                    final_response = ResponseOutputMessage(
-                        id="",
-                        role="assistant",
-                        type="message",
-                        status="completed",
-                        content=[
-                            ResponseOutputText(
-                                type="output_text", annotations=[], logprobs=[], text=""
-                            )
-                        ],
-                    )
-                    self.conversation.append(final_response)  # pyrefly: ignore
-
-        # If we called a tool, we need to call the LLM again to get the final response
-        if needs_followup:
-            llm_answer = (
-                self.client.responses.create(  # pyrefly: ignore[no-matching-overload]
-                    model=self.cfg.text_model_id,
-                    input=self.conversation,
-                    instructions=(
-                        "Respond only with an answer to the user's question, based on "
-                        "the information provided by the tools."
-                    ),
-                    temperature=self.cfg.temperature,
-                    tools=self.tools,
-                )
-            )
-            self.conversation.extend(llm_answer.output)
-
-        # Extract the final answer
-        final_response = self.conversation[-1]
-        assert isinstance(final_response, ResponseOutputMessage), (
-            "The final response is not a ResponseOutputMessage, it's a "
-            f"{type(final_response)}"
-        )
-        final_answer = final_response.content[0]
-        if isinstance(final_answer, ResponseOutputRefusal):
-            final_answer = final_answer.refusal
-        elif isinstance(final_answer, ResponseOutputText):
-            final_answer = final_answer.text
-
-        # Remove URLs from the response
         final_answer = re.sub(
             r"https?://(www\.)[^ ]+", "", final_answer, flags=re.IGNORECASE
         ).replace("()", "")
 
-        # Fix some consistent typos
         for before, after in self.cfg.manual_fixes.items():
             if before in final_answer:
                 logger.info(f"Fixing {before!r} to {after!r} in the response.")
@@ -182,3 +93,88 @@ class TextEngine:
             logger.info(f"Generated the response: {final_answer!r}")
 
         return final_answer
+
+    def _complete_conversation(self) -> str:
+        """Run Chat Completions until the model returns text."""
+        for _ in range(MAX_TOOL_STEPS):
+            completion = self.client.chat.completions.create(
+                model=str(self.cfg.text_model_id),
+                messages=self.conversation,
+                temperature=float(self.cfg.temperature),
+                tools=self.tools,
+            )
+            message = completion.choices[0].message
+            self.conversation.append(
+                t.cast(
+                    ChatCompletionMessageParam, message.model_dump(exclude_none=True)
+                )
+            )
+
+            if not message.tool_calls:
+                return message.content or message.refusal or ""
+
+            needs_followup = False
+            for tool_call in message.tool_calls:
+                if tool_call.type != "function":
+                    raise RuntimeError(f"Unsupported tool call type: {tool_call.type}")
+                function_tool_call = tool_call
+                tool_response = self._call_tool(
+                    name=function_tool_call.function.name,
+                    arguments_json=function_tool_call.function.arguments,
+                )
+                needs_followup = needs_followup or bool(tool_response)
+                self.conversation.append(
+                    dict(
+                        role="tool",
+                        tool_call_id=function_tool_call.id,
+                        content=json.dumps(
+                            {function_tool_call.function.name: tool_response},
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
+
+            if not needs_followup:
+                self.conversation.append(dict(role="assistant", content=""))
+                return ""
+
+        raise RuntimeError(f"The model exceeded {MAX_TOOL_STEPS} tool-calling steps.")
+
+    def _call_tool(self, name: str, arguments_json: str) -> str:
+        """Call one model-requested tool and update the engine state."""
+        parsed_arguments = json.loads(arguments_json)
+        if not isinstance(parsed_arguments, dict):
+            message = f"Tool arguments must be an object, got {parsed_arguments!r}"
+            raise TypeError(message)
+        arguments = {key: value for key, value in parsed_arguments.items() if key != ""}
+        logger.info(f"Using the tool {name!r} with parameters {arguments!r}...")
+
+        try:
+            tool_response, state_updates = getattr(tool_module, name)(
+                state=self.state, **arguments
+            )
+        except TypeError as error:
+            logger.error(f"Error calling tool {name!r}: {error}")
+            logger.info(f"Trying to use the tool {name!r} without arguments...")
+            tool_response, state_updates = getattr(tool_module, name)(state=self.state)
+        self.state.update(state_updates)
+
+        if tool_response:
+            logger.info(f"Tool {name!r} response: {tool_response!r}")
+        return tool_response
+
+    @staticmethod
+    def _format_tools(tools: list[dict[str, object]]) -> list[ChatCompletionToolParam]:
+        """Convert Responses API function schemas to Chat Completions schemas."""
+        return [
+            t.cast(
+                ChatCompletionToolParam,
+                {
+                    "type": "function",
+                    "function": {
+                        key: value for key, value in tool.items() if key != "type"
+                    },
+                },
+            )
+            for tool in tools
+        ]

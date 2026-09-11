@@ -1,11 +1,10 @@
 """Weather forecast tool."""
 
 import logging
-import os
 import re
 from pathlib import Path
 
-import geocoder
+import httpx
 import numpy as np
 import requests_cache
 from openmeteo_requests import Client
@@ -13,11 +12,7 @@ from retry_requests import retry
 
 from ..utils import is_internet_available
 
-logging.getLogger("geocoder.base").setLevel(logging.WARNING)
-
-
 logger = logging.getLogger(__name__)
-
 
 WEATHER_CODES = {
     0: "Klar himmel",
@@ -68,17 +63,19 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
     if not is_internet_available():
         return "Ingen vejrudsigt, da internettet ikke er tilgængeligt.", dict()
 
-    if location == "":
-        location = geocoder.ip("me").address
-        logger.info(
-            f"No location provided, using the current IP location: {location!r}"
-        )
+    try:
+        if location == "":
+            location = _get_current_city()
+            logger.info(
+                f"No location provided, using the current IP location: {location!r}"
+            )
+        latitude, longitude = _geocode_location(location=location)
+    except (httpx.HTTPError, ValueError) as error:
+        logger.error(f"Could not resolve weather location: {error}")
+        return "Ingen vejrudsigt tilgængelig.", dict()
 
-    # Ensure that the weather cache directory exists
     weather_cache = Path(".cache", "weather")
     weather_cache.mkdir(exist_ok=True, parents=True)
-
-    # Create the cache path
     cache_name = re.sub(r"[ ,_]+", "-", location).lower()
     cache_path = weather_cache / cache_name
 
@@ -92,15 +89,11 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
         )
     )
 
-    coordinates = geocoder.geonames(
-        location=location, key=os.getenv("GEONAMES_USERNAME")
-    ).json
-
     response = openmeteo.weather_api(
         url="https://api.open-meteo.com/v1/forecast",
         params=dict(
-            latitude=coordinates["lat"],
-            longitude=coordinates["lng"],
+            latitude=latitude,
+            longitude=longitude,
             wind_speed_unit="ms",
             hourly=[
                 "weather_code",
@@ -148,3 +141,27 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
         out += "\n"
 
     return out, state
+
+
+def _get_current_city() -> str:
+    """Resolve the current city from the public IP address."""
+    response = httpx.get("https://ipapi.co/json/", timeout=5)
+    response.raise_for_status()
+    city = response.json().get("city")
+    if not isinstance(city, str) or not city:
+        raise ValueError("The IP location response did not contain a city.")
+    return city
+
+
+def _geocode_location(location: str) -> tuple[float, float]:
+    """Resolve a place name to latitude and longitude."""
+    response = httpx.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": location, "count": 1, "language": "da", "format": "json"},
+        timeout=5,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    if not results:
+        raise ValueError(f"No coordinates found for {location!r}.")
+    return float(results[0]["latitude"]), float(results[0]["longitude"])

@@ -2,22 +2,21 @@
 
 import datetime as dt
 import logging
-from functools import cached_property
+import os
 
 import onnxruntime as ort
+import openai
 import openwakeword as oww
-import torch
-import transformers.utils.logging as hf_logging
+from dotenv import load_dotenv
 from omegaconf import DictConfig
 from openwakeword.utils import download_models as download_wakeword_models
-from punctfix.inference import PunctFixer
-from transformers.pipelines import Pipeline, pipeline
 
 from .speech_recognition import transcribe_speech
 from .speech_recording import calibrate_audio_threshold, record_speech
-from .speech_synthesis import synthesise_speech
+from .speech_synthesis import SpeechSynthesiser, synthesise_speech
 from .text_engine import TextEngine
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +31,6 @@ class VoiceBot:
                 The Hydra configuration.
         """
         self.cfg = cfg
-        hf_logging.set_verbosity_error()
 
         if cfg.calibrate:
             self.audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
@@ -41,42 +39,24 @@ class VoiceBot:
 
         logger.info("Loading the wake word model...")
         ort.set_default_logger_severity(3)
-        download_wakeword_models(model_names=["hey_jarvis"])
+        download_wakeword_models(model_names=["hey_jarvis"], inference_framework="onnx")
         self.wake_word_model = oww.Model(
             wakeword_models=["hey_jarvis"], inference_framework="onnx"
         )
 
-        # logger.info("Loading the speech synthesis model...")
-        # self.synthesiser = ChatterboxMultilingualTTS.from_pretrained(
-        #     device=self.device, repo_id="CoRal-project/tts-base-compatible"
-        # )
-        self.synthesiser = None
+        logger.info("Configuring the SYV audio client...")
+        self.syv_client = openai.OpenAI(
+            api_key=os.environ["SYV_API_KEY"], base_url=self.cfg.syv_server
+        )
+        self.synthesiser = SpeechSynthesiser(
+            client=self.syv_client,
+            model=self.cfg.tts_model_id,
+            voice=self.cfg.tts_voice,
+        )
 
         logger.info("Loading the text engine model...")
         self.text_engine = TextEngine(cfg=self.cfg)
         self.text_engine.state["synthesiser"] = self.synthesiser
-
-        logger.info("Loading the speech recognition model...")
-        self.transcriber: Pipeline = pipeline(
-            model=self.cfg.asr_model_id,
-            device=self.device,
-            task="automatic-speech-recognition",
-        )
-
-        logger.info("Loading the punctfix model...")
-        self.punct_fixer = PunctFixer(language="da", device=self.device)
-
-    @cached_property
-    def device(self) -> torch.device:
-        """Return the device on which the bot is running."""
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            device = torch.device("mps")
-        else:
-            device = torch.device("cpu")
-        logger.info(f"Using device: {device}")
-        return device
 
     def run(self) -> None:
         """Run the bot."""
@@ -98,8 +78,9 @@ class VoiceBot:
 
             text = transcribe_speech(
                 speech=speech,
-                transcriber=self.transcriber,
-                punct_fixer=self.punct_fixer,
+                client=self.syv_client,
+                model=self.cfg.asr_model_id,
+                language=self.cfg.asr_language,
                 manual_fixes=self.cfg.manual_fixes,
             )
             if text:

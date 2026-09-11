@@ -26,13 +26,16 @@ wake_word_responses:
   - Halløjhalløj
 wake_word_seconds: 1.0
 
-# Speech recognition parameters
-# asr_model_id: CoRal-project/roest-whisper-1.5b-v2
-asr_model_id: CoRal-project/roest-wav2vec2-315m-v3
+# Speech parameters
+syv_server: https://platform.syv.ai/v1
+asr_model_id: syv-transcribe
+asr_language: da
+tts_model_id: syvai/plapre-nano
+tts_voice: tor
 
 # Text engine parameters
-server: http://localhost:1234/v1
-text_model_id: openai/gpt-oss-20b
+text_server: https://api.melious.ai/v1
+text_model_id: deepseek-v4-flash-0731
 temperature: 0.6
 min_prompt_length: 5
 system_prompt: >

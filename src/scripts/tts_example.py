@@ -1,37 +1,25 @@
-"""Run a TTS example."""
+"""Run a SYV TTS example."""
 
+import os
 from pathlib import Path
 
-import torchaudio as ta
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-from huggingface_hub import hf_hub_download
-
-REPO_ID = "CoRal-project/tts-base-compatible"
+import openai
+from dotenv import load_dotenv
 
 
 def main() -> None:
-    """Run the TTS example."""
-    local_path = ""
-    for fpath in [
-        "ve.pt",
-        "t3_23lang.safetensors",
-        "mtl_tokenizer.json",
-        "s3gen.pt",
-        "grapheme_mtl_merged_expanded_v1.json",
-        "conds.pt",
-    ]:
-        local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
-
-    # Load the model
-    checkpoint_dir = Path(local_path).parent  # Same for all files
-    model = ChatterboxMultilingualTTS.from_local(ckpt_dir=checkpoint_dir, device="cuda")
-
-    # Generate speech to a wav file
-    text = "Dette er en test!"
-    wav = model.generate(
-        text=text, language_id="da", exaggeration=1.0, cfg_weight=0.5, temperature=0.4
+    """Generate example speech and save it as a WAV file."""
+    load_dotenv()
+    client = openai.OpenAI(
+        api_key=os.environ["SYV_API_KEY"], base_url="https://platform.syv.ai/v1"
     )
-    ta.save(uri="test.wav", src=wav, sample_rate=model.sr)
+    response = client.audio.speech.create(
+        model="syvai/plapre-nano",
+        input="Hej, verden.",
+        voice="tor",
+        response_format="wav",
+    )
+    response.write_to_file(Path("speech.wav"))
 
 
 if __name__ == "__main__":

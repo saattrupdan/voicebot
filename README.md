@@ -16,4 +16,5 @@ Developer:
 ## Quick Start
 
 1. Run `make install`, which sets up a virtual environment and all Python dependencies therein.
-2. Run `make bot` to start the bot.
+2. Add `SYV_API_KEY` and `MELIOUS_API_KEY` to `.env` when prompted.
+3. Run `make bot` to start the bot.

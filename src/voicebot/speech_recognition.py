@@ -1,56 +1,76 @@
 """Transcription of speech."""
 
+import io
 import logging
+import wave
 
 import numpy as np
-import torch
-import torch_audiomentations as ta
-from punctfix.inference import PunctFixer
-from transformers.pipelines import Pipeline
+import openai
 
 logger = logging.getLogger(__name__)
-logging.getLogger("torch._dynamo.output_graph").setLevel(logging.CRITICAL)
+
+SAMPLE_RATE = 16_000
 
 
 def transcribe_speech(
     speech: np.ndarray,
-    transcriber: Pipeline,
-    punct_fixer: PunctFixer,
+    client: openai.OpenAI,
+    model: str,
+    language: str,
     manual_fixes: dict[str, str],
 ) -> str:
-    """Transcribe speech.
+    """Transcribe speech using the SYV transcription API.
 
     Args:
         speech:
-            Speech to transcribe.
-        transcriber:
-            Pipeline for automatic speech recognition.
-        punct_fixer:
-            Punctuator to fix punctuation in the transcription.
+            Mono speech samples recorded at 16 kHz.
+        client:
+            OpenAI-compatible client configured for the SYV API.
+        model:
+            Transcription model identifier.
+        language:
+            ISO language code for the speech.
         manual_fixes:
             Manual fixes for the transcription output.
 
     Returns:
         Transcribed speech.
     """
-    # Convert the integer audio to float
-    if speech.dtype == np.int16:
-        speech = speech.astype(np.float32) / np.iinfo(np.int16).max
-
-    # Normalise the audio
-    speech = ta.PeakNormalization(p=1.0)(
-        torch.tensor(speech).unsqueeze(0).unsqueeze(0), sample_rate=16_000
-    )[0, 0].numpy()
-
     logger.info(f"Transcribing speech of length {speech.shape[0]:,}...")
-    with torch.inference_mode():
-        transcription_dict = transcriber(inputs=speech)
-        assert isinstance(transcription_dict, dict)
-        transcription = transcription_dict["text"]
+    response = client.audio.transcriptions.create(
+        file=("speech.wav", _encode_wav(speech=speech), "audio/wav"),
+        model=model,
+        language=language,
+    )
+    transcription = response if isinstance(response, str) else response.text
+
     for before, after in manual_fixes.items():
         if before in transcription:
             logger.info(f"Fixing {before!r} to {after!r} in the transcription.")
             transcription = transcription.replace(before, after)
-    transcription = punct_fixer.punctuate(text=transcription)
+
     logger.info(f"Heard the following: {transcription!r}")
     return transcription
+
+
+def _encode_wav(speech: np.ndarray) -> bytes:
+    """Encode mono speech samples as a 16 kHz, 16-bit WAV file."""
+    if speech.ndim != 1:
+        raise ValueError("Speech must be a one-dimensional mono audio array.")
+
+    if speech.dtype == np.int16:
+        pcm_speech = speech
+    elif np.issubdtype(speech.dtype, np.floating):
+        pcm_speech = (np.clip(speech, -1.0, 1.0) * np.iinfo(np.int16).max).astype(
+            np.int16
+        )
+    else:
+        raise TypeError(f"Unsupported speech dtype: {speech.dtype}")
+
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(SAMPLE_RATE)
+        wav_file.writeframes(pcm_speech.astype("<i2", copy=False).tobytes())
+    return wav_buffer.getvalue()

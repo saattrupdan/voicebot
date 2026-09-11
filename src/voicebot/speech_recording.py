@@ -7,15 +7,12 @@ from contextlib import contextmanager
 from time import sleep
 
 import numpy as np
-import onnxruntime as ort
 import openwakeword as oww
 import sounddevice
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from omegaconf import DictConfig
-from openwakeword.utils import download_models as download_wakeword_models
 from pvrecorder import PvRecorder
 
-from .speech_synthesis import synthesise_speech
+from .speech_synthesis import SpeechSynthesiser, synthesise_speech
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +20,11 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16_000
 
 
-# Load the wake word model. This usually produces logs from `onnxruntime`, so we
-# suppress them.
-ort.set_default_logger_severity(3)
-download_wakeword_models(model_names=["hey_jarvis"])
-wake_word_model = oww.Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
-
-
 def record_speech(
     last_response_time: dt.datetime,
     audio_threshold: int,
     wake_word_model: oww.Model,
-    synthesiser: ChatterboxMultilingualTTS | None,
+    synthesiser: SpeechSynthesiser,
     cfg: DictConfig,
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record speech and return it as text.
@@ -47,7 +37,7 @@ def record_speech(
         wake_word_model:
             The wake word detection model.
         synthesiser:
-            The speech synthesiser, or None to use the MacOS `say` command.
+            The speech synthesiser.
         cfg:
             Hydra configuration object.
 

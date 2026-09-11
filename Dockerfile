@@ -1,15 +1,18 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
-# Install Poetry
-RUN pip install "poetry==1.8.2"
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        alsa-utils git libportaudio2 mpg123 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Move the files into the container
+COPY --from=ghcr.io/astral-sh/uv:0.10.11 /uv /uvx /bin/
+
 WORKDIR /project
-COPY . /project
 
-# Install dependencies
-RUN poetry env use python 3.11
-RUN poetry install --no-interaction --no-cache --without dev
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Run the script
-CMD poetry run python src/scripts/run_bot.py
+COPY . .
+RUN uv sync --frozen --no-dev
+
+CMD ["uv", "run", "--frozen", "--no-dev", "src/scripts/run_bot.py"]

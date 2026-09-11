@@ -1,18 +1,20 @@
 """Checks related to the .env file in the repository.
 
 Usage:
-    python src/scripts/fix_dot_env_file.py [--non-interactive]
+    uv run python src/scripts/fix_dot_env_file.py [--non-interactive]
 """
 
 from pathlib import Path
 
 import click
 
-# List of all the environment variables that are desired
 DESIRED_ENVIRONMENT_VARIABLES = dict(
-    GIT_NAME="Enter your full name, to be shown in Git commits:\n> ",
-    GIT_EMAIL="Enter your email, as registered on your Github account:\n> ",
+    GIT_NAME="Enter your full name, to be shown in Git commits",
+    GIT_EMAIL="Enter your email, as registered on your GitHub account",
+    SYV_API_KEY="Enter your SYV API key",
+    MELIOUS_API_KEY="Enter your Melious API key",
 )
+SECRET_ENVIRONMENT_VARIABLES = {"SYV_API_KEY", "MELIOUS_API_KEY"}
 
 
 @click.command()
@@ -23,7 +25,7 @@ DESIRED_ENVIRONMENT_VARIABLES = dict(
     help="If set, the script will not ask for user input.",
 )
 def fix_dot_env_file(non_interactive: bool) -> None:
-    """Ensures that the .env file exists and contains all desired variables.
+    """Ensure that the .env file contains all desired variables.
 
     Args:
         non_interactive:
@@ -32,45 +34,49 @@ def fix_dot_env_file(non_interactive: bool) -> None:
     env_path = Path(".env")
     name_and_email_path = Path(".name_and_email")
 
-    # Ensure that the files exists
-    env_path.touch(exist_ok=True)
+    env_path.touch(mode=0o600, exist_ok=True)
+    env_path.chmod(0o600)
     name_and_email_path.touch(exist_ok=True)
 
-    # Extract all the lines in the files
-    env_file_lines = env_path.read_text().splitlines(keepends=False)
-    name_and_email_file_lines = name_and_email_path.read_text().splitlines(
-        keepends=False
-    )
+    env_file_lines = env_path.read_text().splitlines()
+    name_and_email_file_lines = name_and_email_path.read_text().splitlines()
+    env_vars, env_line_indices = _parse_env_lines(lines=env_file_lines)
+    name_and_email_vars, _ = _parse_env_lines(lines=name_and_email_file_lines)
 
-    # Extract all the environment variables in the files
-    env_vars = {line.split("=")[0]: line.split("=")[1] for line in env_file_lines}
-    name_and_email_vars = {
-        line.split("=")[0]: line.split("=")[1] for line in name_and_email_file_lines
-    }
-
-    desired_env_vars = DESIRED_ENVIRONMENT_VARIABLES
-
-    # For each of the desired environment variables, check if it exists in the .env
-    # file
-    env_vars_missing = [
-        env_var for env_var in desired_env_vars.keys() if env_var not in env_vars
+    missing_env_vars = [
+        name for name in DESIRED_ENVIRONMENT_VARIABLES if not env_vars.get(name, "")
     ]
+    for name in missing_env_vars:
+        value = name_and_email_vars.get(name, "")
+        if not value and not non_interactive:
+            value = click.prompt(
+                DESIRED_ENVIRONMENT_VARIABLES[name],
+                hide_input=name in SECRET_ENVIRONMENT_VARIABLES,
+                show_default=False,
+            )
 
-    # Create all the missing environment variables
-    with env_path.open("a") as f:
-        for env_var in env_vars_missing:
-            value = ""
+        line = f"{name}={value}"
+        if name in env_line_indices:
+            env_file_lines[env_line_indices[name]] = line
+        else:
+            env_line_indices[name] = len(env_file_lines)
+            env_file_lines.append(line)
 
-            if env_var in name_and_email_vars:
-                value = name_and_email_vars[env_var]
-
-            if value == "" and not non_interactive:
-                value = input(desired_env_vars[env_var])
-
-            f.write(f"{env_var}={value}\n")
-
-    # Remove the name and email file
+    env_path.write_text("\n".join(env_file_lines) + "\n")
+    env_path.chmod(0o600)
     name_and_email_path.unlink()
+
+
+def _parse_env_lines(lines: list[str]) -> tuple[dict[str, str], dict[str, int]]:
+    """Parse environment values and their line indices."""
+    values: dict[str, str] = dict()
+    line_indices: dict[str, int] = dict()
+    for index, line in enumerate(lines):
+        name, separator, value = line.partition("=")
+        if separator:
+            values[name] = value
+            line_indices[name] = index
+    return values, line_indices
 
 
 if __name__ == "__main__":
