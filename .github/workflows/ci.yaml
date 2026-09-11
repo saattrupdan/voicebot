@@ -55,6 +55,11 @@ jobs:
           enable-cache: false
           python-version: "3.14"
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libportaudio2
+
       - name: Install dependencies
         run: uv sync --all-groups
 
