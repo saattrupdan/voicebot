@@ -208,12 +208,12 @@ class SpotifyProvider:
                 body = {"uris": [uri]}
             else:
                 body = {"context_uri": uri}
-            body["device_id"] = device.device_id
             _, mutation_error = self._request(
                 context=context,
                 account=account,
                 method="PUT",
                 path="/me/player/play",
+                params={"device_id": device.device_id},
                 json_body=body,
                 mutation=True,
             )

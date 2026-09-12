@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..providers.spotify import SpotifyProvider
 from ..tool_runtime import ToolContext, ToolResult, ToolSpec
 
-_NULL_STRING = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+_NULL_STRING = {"type": ["string", "null"]}
 
 
 class SpotifyToolFactory:
@@ -28,20 +28,15 @@ class SpotifyToolFactory:
                         "profile_name": _NULL_STRING,
                         "query": {"type": "string", "minLength": 1},
                         "media_type": {
-                            "anyOf": [
-                                {
-                                    "type": "string",
-                                    "enum": [
-                                        "track",
-                                        "album",
-                                        "artist",
-                                        "playlist",
-                                        "show",
-                                        "episode",
-                                    ],
-                                },
-                                {"type": "null"},
-                            ]
+                            "type": ["string", "null"],
+                            "enum": [
+                                "track",
+                                "album",
+                                "artist",
+                                "playlist",
+                                "show",
+                                "episode",
+                            ],
                         },
                         "device_name": _NULL_STRING,
                     },
