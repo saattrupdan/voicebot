@@ -382,6 +382,62 @@ def test_post_wake_onset_window_expires_before_late_speech(
     synthesiser.assert_called_once()
 
 
+def test_barge_in_stops_playback_and_records_continued_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed speech during playback stops output and becomes the next turn."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    frames = [_chunk(2_000), _chunk(2_100), _chunk(0)]
+    monkeypatch.setattr(speech_recording, "record", _recorder(frames))
+    wake_word = MagicMock()
+    synthesiser = MagicMock()
+    synthesiser.is_playing = True
+    interrupted = MagicMock()
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=synthesiser,
+        cfg=_config(),
+        force_follow_up=True,
+        on_interrupt=interrupted,
+    )
+
+    assert started is not None
+    assert audio.size > 0
+    synthesiser.stop.assert_called_once_with()
+    interrupted.assert_called_once_with()
+    wake_word.predict.assert_not_called()
+
+
+def test_response_completion_ends_idle_monitoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The response monitor exits when generation ends without an interruption."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    recorder = MagicMock()
+    monkeypatch.setattr(
+        speech_recording, "record", _recorder([_chunk(0)], recorder=recorder)
+    )
+    done = speech_recording.threading.Event()
+    done.set()
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=MagicMock(),
+        synthesiser=MagicMock(),
+        cfg=_config(),
+        force_follow_up=True,
+        stop_event=done,
+    )
+
+    assert audio.size == 0
+    assert started is None
+    recorder.read.assert_called_once_with()
+
+
 def test_recorder_is_deleted_when_stop_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """Recorder deletion is guaranteed after a stop failure."""
     recorder = MagicMock()

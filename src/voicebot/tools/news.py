@@ -11,6 +11,7 @@ import httpx
 from pydantic.main import BaseModel
 
 from ..speech_synthesis import synthesise_speech
+from ._utils import get_cancel_event, is_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -68,20 +69,33 @@ def get_news(state: dict) -> tuple[Literal[""], dict]:
             break
 
     logger.info("Reading out the latest news headlines...")
-    synthesise_speech(text="Her er seneste nyt.", synthesiser=state.get("synthesiser"))
+    synthesise_speech(
+        text="Her er seneste nyt.",
+        synthesiser=state.get("synthesiser"),
+        cancel_event=get_cancel_event(state=state),
+    )
 
     for news in top_news_items:
+        if is_cancelled(state=state):
+            logger.info("News playback was interrupted.")
+            return "", state
         chime.theme("pokemon")
         chime.info()
         sleep(0.5)
+        if is_cancelled(state=state):
+            logger.info("News playback was interrupted.")
+            return "", state
         logger.info(f"Reading news item: {news.title!r}...")
         synthesise_speech(
             text=news.title + ". " + news.description,
             synthesiser=state.get("synthesiser"),
+            cancel_event=get_cancel_event(state=state),
         )
 
     synthesise_speech(
-        text="Det var alt for denne gang.", synthesiser=state.get("synthesiser")
+        text="Det var alt for denne gang.",
+        synthesiser=state.get("synthesiser"),
+        cancel_event=get_cancel_event(state=state),
     )
     logger.info("Finished reading the news.")
 

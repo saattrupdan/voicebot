@@ -6,13 +6,14 @@ from pathlib import Path
 
 import httpx
 import numpy as np
+import requests
 import requests_cache
-from openmeteo_requests import Client
+from openmeteo_requests import Client, OpenMeteoRequestsError
 from retry_requests import retry
 
-from ..utils import is_internet_available
-
 logger = logging.getLogger(__name__)
+
+IP_LOCATION_URLS = ("https://ipapi.co/json/", "https://ipwho.is/")
 
 WEATHER_CODES = {
     0: "Klar himmel",
@@ -60,17 +61,32 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
         A pair (message, state) where message is the weather forecast and state is
         information that the text engine should store.
     """
-    if not is_internet_available():
-        return "Ingen vejrudsigt, da internettet ikke er tilgængeligt.", dict()
+    location = location.strip()
+    if not location:
+        remembered_location = state.get("weather_location")
+        if isinstance(remembered_location, str) and remembered_location:
+            location = remembered_location
+            logger.info(f"Using the remembered weather location: {location!r}")
+        else:
+            try:
+                location = _get_current_city()
+                logger.info(f"Using the current IP location: {location!r}")
+            except ValueError as error:
+                logger.warning(f"Could not resolve the current IP location: {error}")
+                default_location = state.get("weather_default_location")
+                if isinstance(default_location, str) and default_location:
+                    location = default_location
+                    logger.info(f"Using the default weather location: {location!r}")
+                else:
+                    return (
+                        "Jeg kunne ikke finde din placering. Spørg brugeren hvilken by "
+                        "vejrudsigten skal gælde for.",
+                        dict(),
+                    )
 
     try:
-        if location == "":
-            location = _get_current_city()
-            logger.info(
-                f"No location provided, using the current IP location: {location!r}"
-            )
         latitude, longitude = _geocode_location(location=location)
-    except (httpx.HTTPError, ValueError) as error:
+    except (httpx.HTTPError, TypeError, ValueError) as error:
         logger.error(f"Could not resolve weather location: {error}")
         return "Ingen vejrudsigt tilgængelig.", dict()
 
@@ -89,21 +105,32 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
         )
     )
 
-    response = openmeteo.weather_api(
-        url="https://api.open-meteo.com/v1/forecast",
-        params=dict(
-            latitude=latitude,
-            longitude=longitude,
-            wind_speed_unit="ms",
-            hourly=[
-                "weather_code",
-                "temperature_2m",
-                "precipitation",
-                "wind_speed_10m",
-            ],
-            forecast_days=2,
-        ),
-    )[0].Hourly()
+    try:
+        response = openmeteo.weather_api(
+            url="https://api.open-meteo.com/v1/forecast",
+            params=dict(
+                latitude=latitude,
+                longitude=longitude,
+                wind_speed_unit="ms",
+                hourly=[
+                    "weather_code",
+                    "temperature_2m",
+                    "precipitation",
+                    "wind_speed_10m",
+                ],
+                forecast_days=2,
+            ),
+        )[0].Hourly()
+    except (
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OpenMeteoRequestsError,
+        requests.RequestException,
+    ) as error:
+        logger.error(f"Could not retrieve the weather forecast: {error}")
+        return "Ingen vejrudsigt tilgængelig.", dict()
     if response is None:
         return "Ingen vejrudsigt tilgængelig.", dict()
 
@@ -140,17 +167,30 @@ def get_weather(state: dict, location: str) -> tuple[str, dict]:
             out += f"{interval_name}: {interval_values}\n"
         out += "\n"
 
-    return out, state
+    return out, {"weather_location": location}
 
 
 def _get_current_city() -> str:
     """Resolve the current city from the public IP address."""
-    response = httpx.get("https://ipapi.co/json/", timeout=5)
-    response.raise_for_status()
-    city = response.json().get("city")
-    if not isinstance(city, str) or not city:
-        raise ValueError("The IP location response did not contain a city.")
-    return city
+    errors: list[str] = []
+    for url in IP_LOCATION_URLS:
+        try:
+            response = httpx.get(url, timeout=5)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("the response was not an object")
+            if payload.get("success") is False:
+                raise ValueError(str(payload.get("message", "provider failure")))
+            city = payload.get("city")
+            if not isinstance(city, str) or not city.strip():
+                raise ValueError("the response did not contain a city")
+            return city.strip()
+        except (httpx.HTTPError, TypeError, ValueError) as error:
+            logger.warning(f"IP location provider {url!r} failed: {error}")
+            errors.append(f"{url}: {error}")
+
+    raise ValueError("; ".join(errors))
 
 
 def _geocode_location(location: str) -> tuple[float, float]:

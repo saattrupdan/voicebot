@@ -1,24 +1,60 @@
 """The engine that produces new responses."""
 
+import collections.abc as c
 import datetime as dt
 import json
 import logging
 import os
 import re
+import threading
 import typing as t
+from dataclasses import dataclass
+from enum import StrEnum
 
 import openai
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCallUnion,
+    ChatCompletionToolParam,
+)
 
 from . import tools as tool_module
+from .intents import is_end_conversation
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_STEPS = 5
+END_CONVERSATION_MARKER = "[[END_CONVERSATION]]"
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+class TurnAction(StrEnum):
+    """The action requested by a completed user turn."""
+
+    RESPOND = "respond"
+    SILENT = "silent"
+    END = "end"
+
+
+@dataclass(frozen=True)
+class TurnResult:
+    """The outcome of processing one user turn."""
+
+    action: TurnAction
+    text: str = ""
+
+
+@dataclass
+class _ToolCallParts:
+    """Fragments of one streamed function tool call."""
+
+    identifier: str = ""
+    name: str = ""
+    arguments: str = ""
 
 
 class TextEngine:
@@ -38,14 +74,16 @@ class TextEngine:
         self.conversation: list[ChatCompletionMessageParam] = list()
         raw_tools = t.cast(list[dict[str, object]], OmegaConf.to_object(self.cfg.tools))
         self.tools = self._format_tools(tools=raw_tools)
-        self.state: dict = dict()
+        self.state: dict[str, object] = dict()
 
     def generate_response(
         self,
         prompt: str,
         last_response_time: dt.datetime,
         current_response_time: dt.datetime,
-    ) -> str | None:
+        on_segment: c.Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> TurnResult:
         """Generate a new response from a prompt.
 
         Args:
@@ -55,47 +93,76 @@ class TextEngine:
                 Time of the last response.
             current_response_time:
                 Time of the current response.
+            on_segment (optional):
+                Callback receiving speakable response segments as they arrive. Defaults
+                to None.
+            cancel_event (optional):
+                Event used to cancel streamed generation. Defaults to None.
 
         Returns:
-            Generated response, or None if prompt should not be responded to.
+            The completed turn outcome.
         """
+        if is_end_conversation(text=prompt):
+            logger.info("The user ended the conversation.")
+            self.reset_conversation()
+            return TurnResult(action=TurnAction.END)
+
         if len(prompt.strip()) <= self.cfg.min_prompt_length:
             logger.info("The prompt is too short, ignoring it.")
-            return None
+            return TurnResult(action=TurnAction.SILENT)
 
         logger.info(f"Generating a response from the prompt: {prompt!r}...")
-
-        response_delay = current_response_time - last_response_time
-        seconds_since_last_response = response_delay.total_seconds()
-        if seconds_since_last_response > self.cfg.follow_up_max_seconds:
-            system_prompt = self.cfg.system_prompt.strip().format(
-                weekday=WEEKDAYS[dt.datetime.now().weekday()],
-                day=dt.datetime.now().day,
-                month=MONTHS[dt.datetime.now().month - 1],
-                year=dt.datetime.now().year,
-                time=dt.datetime.now().strftime("%H:%M"),
-            )
-            self.conversation = [dict(role="system", content=system_prompt)]
-
+        self._start_conversation_if_needed(
+            last_response_time=last_response_time,
+            current_response_time=current_response_time,
+        )
         self.conversation.append(dict(role="user", content=prompt))
-        final_answer = self._complete_conversation()
+        conversation_with_user = list(self.conversation)
 
-        final_answer = re.sub(
-            r"https?://(www\.)[^ ]+", "", final_answer, flags=re.IGNORECASE
-        ).replace("()", "")
+        active_cancel = cancel_event or threading.Event()
+        if on_segment is None:
+            result = self._complete_conversation()
+        else:
+            self.state["cancel_event"] = active_cancel
+            try:
+                result = self._complete_conversation_stream(
+                    on_segment=on_segment, cancel_event=active_cancel
+                )
+            finally:
+                self.state.pop("cancel_event", None)
 
-        for before, after in self.cfg.manual_fixes.items():
-            if before in final_answer:
-                logger.info(f"Fixing {before!r} to {after!r} in the response.")
-                final_answer = final_answer.replace(before, after)
+        if active_cancel.is_set():
+            self.conversation = conversation_with_user
+        if result.action is TurnAction.END:
+            self.reset_conversation()
+        elif result.text:
+            logger.info(f"Generated the response: {result.text!r}")
+        return result
 
-        if final_answer:
-            logger.info(f"Generated the response: {final_answer!r}")
+    def reset_conversation(self) -> None:
+        """Clear the current conversational history."""
+        self.conversation.clear()
 
-        return final_answer
+    def _start_conversation_if_needed(
+        self, last_response_time: dt.datetime, current_response_time: dt.datetime
+    ) -> None:
+        """Start a fresh model conversation after the follow-up window expires."""
+        response_delay = current_response_time - last_response_time
+        if response_delay.total_seconds() <= self.cfg.follow_up_max_seconds:
+            return
 
-    def _complete_conversation(self) -> str:
-        """Run Chat Completions until the model returns text."""
+        now = dt.datetime.now()
+        system_prompt = self.cfg.system_prompt.strip().format(
+            weekday=WEEKDAYS[now.weekday()],
+            day=now.day,
+            month=MONTHS[now.month - 1],
+            year=now.year,
+            time=now.strftime("%H:%M"),
+        )
+        self.conversation = [dict(role="system", content=system_prompt)]
+
+    def _complete_conversation(self) -> TurnResult:
+        """Run non-streamed Chat Completions until the model returns text."""
         for _ in range(MAX_TOOL_STEPS):
             completion = self.client.chat.completions.create(
                 model=str(self.cfg.text_model_id),
@@ -111,37 +178,199 @@ class TextEngine:
             )
 
             if not message.tool_calls:
-                return message.content or message.refusal or ""
+                text = self._clean_response(message.content or message.refusal or "")
+                if text == END_CONVERSATION_MARKER:
+                    return TurnResult(action=TurnAction.END)
+                action = TurnAction.RESPOND if text else TurnAction.SILENT
+                return TurnResult(action=action, text=text)
 
-            needs_followup = False
-            for tool_call in message.tool_calls:
-                if tool_call.type != "function":
-                    raise RuntimeError(f"Unsupported tool call type: {tool_call.type}")
-                function_tool_call = tool_call
-                tool_response = self._call_tool(
-                    name=function_tool_call.function.name,
-                    arguments_json=function_tool_call.function.arguments,
-                )
-                needs_followup = needs_followup or bool(tool_response)
-                self.conversation.append(
-                    dict(
-                        role="tool",
-                        tool_call_id=function_tool_call.id,
-                        content=json.dumps(
-                            {function_tool_call.function.name: tool_response},
-                            ensure_ascii=False,
-                        ),
-                    )
-                )
-
+            needs_followup = self._call_tools(tool_calls=message.tool_calls)
             if not needs_followup:
                 self.conversation.append(dict(role="assistant", content=""))
-                return ""
+                return TurnResult(action=TurnAction.SILENT)
 
         raise RuntimeError(f"The model exceeded {MAX_TOOL_STEPS} tool-calling steps.")
 
+    def _complete_conversation_stream(
+        self, on_segment: c.Callable[[str], None], cancel_event: threading.Event
+    ) -> TurnResult:
+        """Stream Chat Completions and emit complete speakable segments."""
+        for _ in range(MAX_TOOL_STEPS):
+            received_delta = False
+            try:
+                stream = self.client.chat.completions.create(
+                    model=str(self.cfg.text_model_id),
+                    messages=self.conversation,
+                    temperature=float(self.cfg.temperature),
+                    tools=self.tools,
+                    stream=True,
+                )
+                content = ""
+                refusal = ""
+                pending_speech = ""
+                end_marker_possible = True
+                tool_parts: dict[int, _ToolCallParts] = {}
+                try:
+                    for chunk in stream:
+                        if cancel_event.is_set():
+                            return TurnResult(action=TurnAction.SILENT)
+                        if not chunk.choices:
+                            continue
+                        received_delta = True
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            content += delta.content
+                            pending_speech += delta.content
+                        if delta.refusal:
+                            refusal += delta.refusal
+                            pending_speech += delta.refusal
+                        if pending_speech and end_marker_possible:
+                            candidate = pending_speech.lstrip()
+                            end_marker_possible = END_CONVERSATION_MARKER.startswith(
+                                candidate
+                            )
+                        if pending_speech and not end_marker_possible:
+                            pending_speech = self._emit_complete_segments(
+                                text=pending_speech, on_segment=on_segment
+                            )
+                        for tool_call in delta.tool_calls or []:
+                            parts = tool_parts.setdefault(
+                                tool_call.index, _ToolCallParts()
+                            )
+                            if tool_call.id:
+                                parts.identifier += tool_call.id
+                            if tool_call.function is not None:
+                                if tool_call.function.name:
+                                    parts.name += tool_call.function.name
+                                if tool_call.function.arguments:
+                                    parts.arguments += tool_call.function.arguments
+                finally:
+                    stream.close()
+            except (AttributeError, TypeError, openai.APIError) as error:
+                if received_delta:
+                    raise
+                logger.warning(
+                    f"Streaming completion unavailable, falling back: {error}"
+                )
+                result = self._complete_conversation()
+                if result.text and not cancel_event.is_set():
+                    on_segment(result.text)
+                return result
+
+            if cancel_event.is_set():
+                return TurnResult(action=TurnAction.SILENT)
+
+            if not tool_parts:
+                final_text = content or refusal
+                if final_text.strip() == END_CONVERSATION_MARKER:
+                    return TurnResult(action=TurnAction.END)
+                pending_speech = self._emit_complete_segments(
+                    text=pending_speech, on_segment=on_segment
+                )
+                if pending_speech.strip() and not cancel_event.is_set():
+                    segment = self._clean_response(pending_speech)
+                    if segment:
+                        on_segment(segment)
+                if cancel_event.is_set():
+                    return TurnResult(action=TurnAction.SILENT)
+                self.conversation.append(dict(role="assistant", content=final_text))
+                cleaned_text = self._clean_response(final_text)
+                action = TurnAction.RESPOND if cleaned_text else TurnAction.SILENT
+                return TurnResult(action=action, text=cleaned_text)
+
+            tool_calls: list[dict[str, object]] = [
+                {
+                    "id": parts.identifier,
+                    "type": "function",
+                    "function": {"name": parts.name, "arguments": parts.arguments},
+                }
+                for _, parts in sorted(tool_parts.items())
+            ]
+            self.conversation.append(
+                t.cast(
+                    ChatCompletionMessageParam,
+                    {
+                        "role": "assistant",
+                        "content": content or None,
+                        "tool_calls": tool_calls,
+                    },
+                )
+            )
+            needs_followup = self._call_streamed_tools(tool_calls=tool_calls)
+            if not needs_followup:
+                self.conversation.append(dict(role="assistant", content=""))
+                return TurnResult(action=TurnAction.SILENT)
+
+        raise RuntimeError(f"The model exceeded {MAX_TOOL_STEPS} tool-calling steps.")
+
+    def _emit_complete_segments(
+        self, text: str, on_segment: c.Callable[[str], None]
+    ) -> str:
+        """Emit complete sentence segments and return the unfinished suffix."""
+        parts = _SENTENCE_BOUNDARY.split(text)
+        if len(parts) == 1:
+            return text
+        for part in parts[:-1]:
+            segment = self._clean_response(part)
+            if segment:
+                on_segment(segment)
+        return parts[-1]
+
+    def _call_tools(
+        self, tool_calls: c.Sequence[ChatCompletionMessageToolCallUnion]
+    ) -> bool:
+        """Call non-streamed model-requested tools."""
+        needs_followup = False
+        for tool_call in tool_calls:
+            if getattr(tool_call, "type") != "function":
+                raise RuntimeError(
+                    f"Unsupported tool call type: {getattr(tool_call, 'type')!r}"
+                )
+            function = getattr(tool_call, "function")
+            name = str(getattr(function, "name"))
+            tool_response = self._call_tool(
+                name=name, arguments_json=str(getattr(function, "arguments"))
+            )
+            needs_followup = needs_followup or bool(tool_response)
+            self._append_tool_response(
+                identifier=str(getattr(tool_call, "id")),
+                name=name,
+                response=tool_response,
+            )
+        return needs_followup
+
+    def _call_streamed_tools(self, tool_calls: list[dict[str, object]]) -> bool:
+        """Call streamed model-requested tools."""
+        needs_followup = False
+        for tool_call in tool_calls:
+            function = t.cast(dict[str, str], tool_call["function"])
+            name = function["name"]
+            tool_response = self._call_tool(
+                name=name, arguments_json=function["arguments"]
+            )
+            needs_followup = needs_followup or bool(tool_response)
+            self._append_tool_response(
+                identifier=str(tool_call["id"]), name=name, response=tool_response
+            )
+        return needs_followup
+
+    def _append_tool_response(self, identifier: str, name: str, response: str) -> None:
+        """Append a tool response to the current model conversation."""
+        self.conversation.append(
+            dict(
+                role="tool",
+                tool_call_id=identifier,
+                content=json.dumps({name: response}, ensure_ascii=False),
+            )
+        )
+
     def _call_tool(self, name: str, arguments_json: str) -> str:
         """Call one model-requested tool and update the engine state."""
+        cancel_event = self.state.get("cancel_event")
+        if isinstance(cancel_event, threading.Event) and cancel_event.is_set():
+            logger.info(f"Skipping cancelled tool call {name!r}.")
+            return ""
+
         parsed_arguments = json.loads(arguments_json)
         if not isinstance(parsed_arguments, dict):
             message = f"Tool arguments must be an object, got {parsed_arguments!r}"
@@ -162,6 +391,16 @@ class TextEngine:
         if tool_response:
             logger.info(f"Tool {name!r} response: {tool_response!r}")
         return tool_response
+
+    def _clean_response(self, text: str) -> str:
+        """Prepare response text for speech synthesis."""
+        text = re.sub(r"https?://(?:www\.)?[^ ]+", "", text, flags=re.IGNORECASE)
+        text = text.replace("()", "").strip()
+        for before, after in self.cfg.manual_fixes.items():
+            if before in text:
+                logger.info(f"Fixing {before!r} to {after!r} in the response.")
+                text = text.replace(before, after)
+        return text
 
     @staticmethod
     def _format_tools(tools: list[dict[str, object]]) -> list[ChatCompletionToolParam]:

@@ -9,6 +9,7 @@ from typing import Literal
 import chime
 
 from ..speech_synthesis import synthesise_speech
+from ._utils import get_cancel_event
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ def set_timer(state: dict, duration_seconds: int) -> tuple[Literal[""], dict]:
     synthesise_speech(
         text=f"Startet timer på {timer.pretty_duration}.",
         synthesiser=state.get("synthesiser"),
+        cancel_event=get_cancel_event(state=state),
     )
     return "", dict(running_timers=[timer for timer in running_timers])
 
@@ -55,7 +57,9 @@ def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], d
     if not running_timers:
         logger.info("No running timers to stop.")
         synthesise_speech(
-            text="Der er ingen kørende timere.", synthesiser=state.get("synthesiser")
+            text="Der er ingen kørende timere.",
+            synthesiser=state.get("synthesiser"),
+            cancel_event=get_cancel_event(state=state),
         )
         return ("", dict(running_timers=[]))
 
@@ -75,6 +79,7 @@ def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], d
             synthesise_speech(
                 text=f"Der var ingen timer med varighed {duration}.",
                 synthesiser=state.get("synthesiser"),
+                cancel_event=get_cancel_event(state=state),
             )
             return ("", dict(running_timers=[timer for timer in running_timers]))
         else:
@@ -87,6 +92,7 @@ def stop_timer(state: dict, duration: str | None = None) -> tuple[Literal[""], d
     synthesise_speech(
         text=f"Stoppet timer på {timer_to_stop.pretty_duration}.",
         synthesiser=state.get("synthesiser"),
+        cancel_event=get_cancel_event(state=state),
     )
     return "", dict(running_timers=[timer for timer in running_timers])
 
@@ -106,7 +112,9 @@ def list_timers(state: dict) -> tuple[Literal[""], dict]:
     if not running_timers:
         logger.info("No running timers to list.")
         synthesise_speech(
-            text="Der er ingen kørende timere.", synthesiser=state.get("synthesiser")
+            text="Der er ingen kørende timere.",
+            synthesiser=state.get("synthesiser"),
+            cancel_event=get_cancel_event(state=state),
         )
         return "", state
 
@@ -120,6 +128,7 @@ def list_timers(state: dict) -> tuple[Literal[""], dict]:
     synthesise_speech(
         text=f"Der kører {len(running_timers)} {noun}: {timers_info}",
         synthesiser=state.get("synthesiser"),
+        cancel_event=get_cancel_event(state=state),
     )
     return "", state
 

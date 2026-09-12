@@ -3,9 +3,10 @@
 import datetime as dt
 import logging
 import math
+import threading
 import typing as t
 from collections import deque
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -353,6 +354,9 @@ def record_speech(
     wake_word_model: oww.Model,
     synthesiser: SpeechSynthesiser,
     cfg: DictConfig,
+    force_follow_up: bool = False,
+    stop_event: threading.Event | None = None,
+    on_interrupt: Callable[[], None] | None = None,
 ) -> tuple[np.ndarray, dt.datetime | None]:
     """Record confirmed speech and return it with its start time.
 
@@ -367,6 +371,13 @@ def record_speech(
             Speech synthesiser used for wake-word acknowledgement.
         cfg:
             Hydra configuration object.
+        force_follow_up (optional):
+            Whether confirmed speech should be accepted without a wake word. Defaults
+            to False.
+        stop_event (optional):
+            Event that ends idle listening. Defaults to None.
+        on_interrupt (optional):
+            Callback invoked as soon as a forced follow-up begins. Defaults to None.
 
     Returns:
         Recorded speech and the time at which recording started, or an empty array
@@ -377,7 +388,11 @@ def record_speech(
     chunk_size = int(SAMPLE_RATE * chunk_seconds)
     max_audio_samples = int(float(cfg.max_seconds_audio) * SAMPLE_RATE)
     post_wake_onset_samples = max(
-        1, math.ceil(float(cfg.max_seconds_silence) * SAMPLE_RATE)
+        1,
+        math.ceil(
+            float(cfg.get("post_wake_max_seconds", cfg.max_seconds_silence))
+            * SAMPLE_RATE
+        ),
     )
     pre_roll_chunks = math.ceil(float(cfg.pre_roll_seconds) / chunk_seconds)
     pre_roll: deque[np.ndarray] = deque(maxlen=max(1, pre_roll_chunks))
@@ -387,14 +402,33 @@ def record_speech(
     audio_start: dt.datetime | None = None
     recording = False
     armed_after_wake = False
+    barge_in_candidate = False
+    barge_in_samples = 0
+    barge_in_confirmation_samples = int(
+        float(cfg.get("barge_in_confirmation_seconds", 0.35)) * SAMPLE_RATE
+    )
+    interrupt_notified = False
 
-    logger.info("Listening for wakeword...")
+    logger.info(
+        "Listening for speech..." if force_follow_up else "Listening for wakeword..."
+    )
     try:
         with record(chunk_size=chunk_size) as recorder:
             while True:
                 frame = _as_int16(np.asarray(recorder.read()))
                 if frame.size == 0:
                     break
+                if (
+                    stop_event is not None
+                    and stop_event.is_set()
+                    and not recording
+                    and not barge_in_candidate
+                ):
+                    return np.empty(0, dtype=np.int16), None
+                if barge_in_candidate:
+                    barge_in_samples += frame.size
+                    if barge_in_samples > barge_in_confirmation_samples:
+                        return np.empty(0, dtype=np.int16), None
                 if frames_left_to_ignore:
                     detector.process_chunk(frame, update_noise_floor=False)
                     frames_left_to_ignore -= 1
@@ -426,14 +460,37 @@ def record_speech(
                     seconds_since_last_response = (
                         dt.datetime.now() - last_response_time
                     ).total_seconds()
-                    follow_up = seconds_since_last_response < float(
+                    follow_up = force_follow_up or seconds_since_last_response < float(
                         cfg.follow_up_max_seconds
                     )
                     if follow_up or armed_after_wake:
+                        if (
+                            force_follow_up
+                            and synthesiser.is_playing
+                            and not barge_in_candidate
+                        ):
+                            logger.info(
+                                "Possible barge-in detected, stopping playback."
+                            )
+                            synthesiser.stop()
+                            if on_interrupt is not None and not interrupt_notified:
+                                on_interrupt()
+                                interrupt_notified = True
+                            detector.reset_activity()
+                            pre_roll.clear()
+                            pre_roll.append(frame)
+                            barge_in_candidate = True
+                            barge_in_samples = 0
+                            continue
+
                         logger.info(
                             "Follow-up detected!" if follow_up else "Speech detected!"
                         )
+                        if on_interrupt is not None and not interrupt_notified:
+                            on_interrupt()
+                            interrupt_notified = True
                         recording = True
+                        barge_in_candidate = False
                         armed_after_wake = False
                         wake_word_model.reset()
                         audio_start = dt.datetime.now()

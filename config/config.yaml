@@ -15,9 +15,11 @@ speech_start_snr: 2.5
 speech_end_snr: 1.4
 onset_frames: 2
 pre_roll_seconds: 0.16
-max_seconds_silence: 2.0
+max_seconds_silence: 0.8
+post_wake_max_seconds: 2.0
 max_seconds_audio: 10.0
 follow_up_max_seconds: 5.0
+barge_in_confirmation_seconds: 0.35
 play_back_audio: false
 
 # Wake word detection parameters
@@ -39,6 +41,8 @@ asr_model_id: syv-transcribe
 asr_language: da
 tts_model_id: syvai/plapre-nano
 tts_voice: tor
+tts_sample_rate: 24000
+weather_default_location: ""
 
 # Text engine parameters
 text_server: https://api.melious.ai/v1
@@ -54,7 +58,9 @@ system_prompt: >
   and grammar mistakes. You should try to understand what the user meant, and just
   pretend that that's what they said.
 
-  If a tool is potentially relevant to the user's query, you should always call it.
+  If a tool is potentially relevant to the user's query, you should always call it. If
+  the user indicates that they are done talking or wants you to stop, respond with
+  exactly [[END_CONVERSATION]] as the very first output and nothing else.
 
   Today is {weekday}, {month} {day} {year} and the time is {time} (in 24-hour
   format), but you don't need to say that.
