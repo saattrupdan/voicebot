@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
+import subprocess
 import threading
 import time
 import typing as t
@@ -134,6 +136,77 @@ def test_runtime_uses_configured_device_and_restores_legacy_tools(
         )
     finally:
         runtime.stop()
+
+
+def test_listonic_agent_browser_smoke_uses_headed_json_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise onboarding against agent-browser's real JSON response shape."""
+    commands: list[list[str]] = []
+    eval_response = {
+        "success": True,
+        "data": {
+            "origin": "https://listonic.com/",
+            "result": {
+                "localStorage": {
+                    "auth": json.dumps(
+                        {
+                            "access_token": "access-canary",
+                            "refresh_token": "refresh-canary",
+                            "expires_in": 3600,
+                        }
+                    )
+                },
+                "sessionStorage": {},
+            },
+        },
+        "error": None,
+    }
+    responses = {
+        "open": {
+            "success": True,
+            "data": {"title": "Listonic", "url": "https://listonic.com/login"},
+            "error": None,
+        },
+        "eval": eval_response,
+        "cookies": {"success": True, "data": {"cookies": []}, "error": None},
+        "close": {"success": True, "data": {"closed": True}, "error": None},
+    }
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        if "open" in command:
+            response = responses["open"]
+        elif "eval" in command:
+            response = responses["eval"]
+        elif "cookies" in command:
+            response = responses["cookies"]
+        else:
+            response = responses["close"]
+        return subprocess.CompletedProcess(command, 0, json.dumps(response), "")
+
+    monkeypatch.setattr(integrations.subprocess, "run", run)
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    session = integrations._IsolatedBrowserSession("agent-browser")
+    session.open_login("https://listonic.com/login")
+    exported = session.export_tokens()
+    session.destroy()
+
+    assert isinstance(exported, dict)
+    assert "access-canary" in str(exported)
+    assert any("--headed" in command for command in commands)
+    eval_command = next(command for command in commands if "eval" in command)
+    assert "JSON.stringify" not in eval_command
+    assert "--json" in eval_command
+    sessions = {command[command.index("--session") + 1] for command in commands}
+    assert len(sessions) == 1
+    assert not any(
+        secret in " ".join(command)
+        for command in commands
+        for secret in ("access-canary", "refresh-canary")
+    )
 
 
 def test_missing_listonic_helper_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

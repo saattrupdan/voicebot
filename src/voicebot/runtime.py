@@ -477,7 +477,8 @@ def _build_storage(cfg: DictConfig) -> Storage:
             from hydra.utils import get_original_cwd
 
             path = pathlib.Path(get_original_cwd()) / path
-        except ImportError, RuntimeError:
+        except ImportError, RuntimeError, ValueError:
+            # Hydra raises ValueError when this function is called outside a Hydra run.
             path = pathlib.Path.cwd() / path
     return Storage(path)
 
