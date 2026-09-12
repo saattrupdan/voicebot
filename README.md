@@ -12,36 +12,40 @@ integrations.
 The default configuration keeps Google Calendar, Spotify, and Listonic disabled. Named
 timers are local to the process; reminders are stored in
 `.local/state/voicebot.sqlite` and are delivered by the scheduler embedded in the bot.
-The scheduler uses a SQLite lease, so a restart recovers due notifications and does not
-deliver one reminder twice.
+The scheduler uses a SQLite lease, so a restart recovers due notifications. Delivery is
+at-least-once: a crash after playback but before acknowledgement can repeat a reminder.
 
 ## Local setup and integration status
 
 Run the setup CLI without entering credentials on the command line:
 
 ```sh
-uv run python src/scripts/integrations.py status
-uv run python src/scripts/integrations.py login spotify --profile dan
-uv run python src/scripts/integrations.py disconnect spotify --profile dan
+uv run src/scripts/integrations.py status
+uv run src/scripts/integrations.py login spotify --profile dan
+uv run src/scripts/integrations.py disconnect spotify --profile dan
 
 # Optional: override the shared SQLite location for smoke tests or another installation
 VOICEBOT_DATABASE_PATH=/path/to/voicebot.sqlite \\
-  uv run python src/scripts/integrations.py status
+  uv run src/scripts/integrations.py status
 ```
 
 Status output contains only provider, profile, and connection state. Login creates or
 rehydrates the profile and persists account metadata in the configured SQLite database;
 the bot and this CLI therefore use the same state. Disconnect revokes where supported,
-erases the keyring secret, and records disconnected status. Refresh credentials live in
-the operating-system keyring by default; use `storage.credential_backend: memory` only
-for disposable tests. The database stores opaque credential references and aliases, not
-keys or tokens. Back up the database before migrations, but never copy `.env` or a
-keyring export into source control.
+erases the keyring secret, and records disconnected status. Refresh credentials live
+in the operating-system keyring by default; use `storage.credential_backend: memory`
+only for disposable tests. Listonic's expiring
+imported access state is also stored only in that credential backend, separately from
+its refresh credential, so it survives CLI exit. The database stores opaque credential
+references and aliases, not keys or tokens. Back up the database before migrations,
+but never copy `.env` or a keyring export into source control.
 
 Add spoken profile aliases under `profiles` (and select one installation default with
 `device.default_profile`). Calendar aliases, Spotify device aliases, and Listonic list
 aliases are setup-owned local mappings under their respective integration sections.
 Provider IDs in these mappings are never accepted as model arguments or spoken back.
+Set `mutations_enabled: false` to centrally disable every tool that changes local or
+provider state while retaining read-only tools.
 
 ### OAuth providers
 
@@ -65,13 +69,24 @@ Listonic support is an unofficial, contract-pinned integration. It is disabled u
 both `integrations.listonic.enabled` and
 `integrations.listonic.allow_unofficial` are true. Login uses a disposable isolated
 browser helper and never asks the bot for a Listonic password. Install `agent-browser`
-or set `LISTONIC_BROWSER_HELPER` before Listonic login; the command reports a local setup
-error when neither is available. The helper must expose the authenticated browser state;
-refresh is deliberately fail-closed because Listonic has no verified refresh contract.
-Keep it disabled unless the operational risk of an undocumented API is acceptable;
-contract drift fails closed.
-Removing an individual item requires a local yes/no confirmation. List creation,
-sharing, whole-list deletion, and other unsupported operations remain unavailable.
+or set `LISTONIC_BROWSER_HELPER` before Listonic login; the command reports a local
+setup error when neither is available. The helper must expose the authenticated browser
+state; refresh is deliberately fail-closed because Listonic has no verified refresh
+contract.
+An expired access state reports that re-onboarding is required. Keep the integration
+disabled unless the operational risk of an undocumented API is acceptable; contract
+drift fails closed.
+
+Shopping requests which omit `list_name` require an explicit per-profile entry under
+`integrations.listonic.default_lists`; the runtime never chooses the first persisted
+binding.
+
+Item removal is not verified and is unavailable by default even when Listonic reads and
+adds are enabled. Enabling `allow_unverified_item_removal` requires prior live testing
+against a disposable list; this project does not claim that endpoint is verified. When
+enabled, each removal still requires a local, device-bound yes/no confirmation. List
+creation, sharing, whole-list deletion, and other unsupported operations remain
+unavailable.
 
 ## Conversation and audio behaviour
 

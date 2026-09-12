@@ -127,7 +127,6 @@ class ConfirmationManager:
             or pending.payload.get("device_id") != current_device
             or (arguments is not None and arguments != pending.payload.get("arguments"))
         ):
-            self.runtime.state.pop("pending_confirmation_id", None)
             return ToolResult(
                 status=ToolStatus.CONFLICT,
                 message_da="Bekræftelsen er udløbet eller hører til en anden enhed.",
@@ -142,28 +141,34 @@ class ConfirmationManager:
                 message_da="Bekræftelsen er udløbet eller allerede brugt.",
             )
         if not accepted:
-            return ToolResult(
-                status=ToolStatus.OK, message_da="Handlingen er annulleret."
+            result = ToolResult(
+                status=ToolStatus.OK,
+                operation_id=pending.operation_id,
+                message_da="Handlingen er annulleret.",
             )
+            if pending.operation_id is not None:
+                operation = self.runtime.storage.operations.get(pending.operation_id)
+                if operation is not None:
+                    self.runtime.storage.operations.complete(
+                        operation.id, result=result.as_dict()
+                    )
+            return result
         stored_arguments = pending.payload.get("arguments")
         if not isinstance(stored_arguments, dict):
             return ToolResult(
                 status=ToolStatus.INVALID_REQUEST,
                 message_da="Bekræftelsen var ugyldig.",
             )
-        self.runtime.state["_resume_confirmation"] = True
-        try:
-            return self.runtime.registry.invoke(
-                pending.action,
-                t.cast(dict[str, object], stored_arguments),
-                ToolContext(
-                    state=self.runtime.state,
-                    operation_id=pending.operation_id,
-                    device_id=t.cast(str, current_device),
-                ),
-            )
-        finally:
-            self.runtime.state.pop("_resume_confirmation", None)
+        return self.runtime.registry.invoke(
+            pending.action,
+            t.cast(dict[str, object], stored_arguments),
+            ToolContext(
+                state=self.runtime.state,
+                operation_id=pending.operation_id,
+                device_id=t.cast(str, current_device),
+                confirmation_resume=True,
+            ),
+        )
 
 
 @dataclass
@@ -243,6 +248,9 @@ def build_integration_runtime(
     listonic_config = _mapping(integrations.get("listonic", {}))
     listonic_enabled = bool(listonic_config.get("enabled", False))
     listonic_allowed = bool(listonic_config.get("allow_unofficial", False))
+    listonic_removal_allowed = bool(
+        listonic_config.get("allow_unverified_item_removal", False)
+    )
     google_config = _mapping(integrations.get("google_calendar", {}))
     spotify_config = _mapping(integrations.get("spotify", {}))
     list_aliases = _merge_aliases(
@@ -278,16 +286,11 @@ def build_integration_runtime(
         profile_aliases=profile_aliases,
         default_profile=default_profile,
         auth_handler=spotify_auth,
-        device_aliases=t.cast(
-            dict[str, str],
-            _merge_aliases(
-                t.cast(
-                    dict[str, object],
-                    _device_aliases(storage, accounts.get("spotify", {})),
-                ),
-                _mapping(spotify_config.get("device_aliases", {})),
-                _mapping(_value(cfg, "spotify_device_aliases", {})),
-            ),
+        device_aliases=_spotify_device_aliases(
+            storage=storage,
+            configured=_mapping(spotify_config.get("device_aliases", {})),
+            legacy=_mapping(_value(cfg, "spotify_device_aliases", {})),
+            default_profile=default_profile,
         ),
     )
     listonic = ListonicProvider(
@@ -295,6 +298,7 @@ def build_integration_runtime(
         accounts=accounts.get("listonic", {}),
         enabled=listonic_enabled,
         allow_unofficial=listonic_allowed,
+        allow_unverified_item_removal=listonic_removal_allowed,
     )
 
     configured_device_id = _mapping(_value(cfg, "device", {})).get("id", "local-device")
@@ -322,6 +326,7 @@ def build_integration_runtime(
             handler=lambda context, arguments: t.cast(
                 ToolResult, set_timer(context, arguments)
             ),
+            mutates=True,
         ),
         ToolSpec(
             name="list_timers",
@@ -338,6 +343,7 @@ def build_integration_runtime(
             handler=lambda context, arguments: t.cast(
                 ToolResult, stop_timer(context, arguments)
             ),
+            mutates=True,
         ),
         create_reminder_spec(storage),
         list_reminder_spec(storage),
@@ -375,12 +381,22 @@ def build_integration_runtime(
         profile_aliases=profile_aliases,
         list_aliases=t.cast(dict[str, str] | dict[str, dict[str, str]], list_aliases),
         default_profile=default_profile,
-        default_lists=_default_lists(storage),
+        default_lists=_configured_default_lists(
+            listonic_config=listonic_config, list_aliases=list_aliases
+        ),
         confirmation_checker=None,
     )
+    shopping_specs = list(shopping.specs())
+    for index, spec in enumerate(shopping_specs):
+        if spec.name == "remove_shopping_item":
+            shopping_specs[index : index + 1] = _gate_specs(
+                [spec],
+                listonic_removal_allowed,
+                "Fjernelse kræver særskilt live-verificering og aktivering.",
+            )
     specs.extend(
         _gate_specs(
-            shopping.specs(),
+            shopping_specs,
             listonic_enabled and listonic_allowed,
             "Listonic er ikke aktiveret.",
         )
@@ -404,7 +420,10 @@ def build_integration_runtime(
         include_integrations=True,
         include_legacy=True,
     )
-    runtime = ToolRuntime(registry=registry)
+    runtime = ToolRuntime(
+        registry=registry,
+        mutations_enabled=bool(_value(cfg, "mutations_enabled", True)),
+    )
     result = IntegrationRuntime(
         storage=storage,
         credentials=credentials,
@@ -429,7 +448,7 @@ def _install_confirmation(
 
     def checker(context: ToolContext, resolved: dict[str, object]) -> bool:
         arguments = context.state.get("_confirmation_arguments")
-        if context.state.get("_resume_confirmation") is True:
+        if context.confirmation_resume:
             return True
         if not isinstance(arguments, dict):
             return False
@@ -498,11 +517,14 @@ def _ensure_profiles(
         if not isinstance(name, str):
             continue
         profile_names.append(name)
+        aliases[name] = name
         profile = next(
             (item for item in storage.profiles.list() if item.name == name), None
         )
         if profile is None:
             profile = storage.profiles.create(name)
+        if not storage.profiles.find_aliases(name):
+            storage.profiles.add_alias(profile.id, name)
         profile_aliases = _mapping(value).get("aliases", [])
         if isinstance(profile_aliases, str):
             profile_aliases = [profile_aliases]
@@ -582,13 +604,30 @@ def _calendar_bindings(
     return values
 
 
-def _device_aliases(
-    storage: Storage, accounts: dict[str, ProviderAccount]
-) -> dict[str, str]:
-    del accounts
-    values: dict[str, str] = {}
+def _spotify_device_aliases(
+    *,
+    storage: Storage,
+    configured: dict[str, object],
+    legacy: dict[str, object],
+    default_profile: str | None,
+) -> dict[str, dict[str, str]]:
+    profiles = {profile.id: profile.name for profile in storage.profiles.list()}
+    values: dict[str, dict[str, str]] = {}
     for binding in storage.providers.find_bindings("spotify_device"):
-        values[binding.alias] = binding.provider_id
+        profile = profiles.get(binding.profile_id)
+        if profile is not None:
+            values.setdefault(profile, {})[binding.alias] = binding.provider_id
+    for source in (legacy, configured):
+        nested = any(isinstance(item, c.Mapping) for item in source.values())
+        if nested:
+            for profile, aliases in source.items():
+                for alias, target in _mapping(aliases).items():
+                    if isinstance(target, str):
+                        values.setdefault(profile, {})[alias] = target
+        elif default_profile is not None:
+            for alias, target in source.items():
+                if isinstance(target, str):
+                    values.setdefault(default_profile, {})[alias] = target
     return values
 
 
@@ -602,14 +641,19 @@ def _list_aliases(storage: Storage) -> dict[str, dict[str, str]]:
     return result
 
 
-def _default_lists(storage: Storage) -> dict[str, str]:
-    return {
-        profile.name: binding.provider_id
-        for profile in storage.profiles.list()
-        for binding in storage.providers.find_bindings(
-            "shopping_list", profile_id=profile.id
-        )[:1]
-    }
+def _configured_default_lists(
+    *, listonic_config: dict[str, object], list_aliases: dict[str, object]
+) -> dict[str, str]:
+    configured = _mapping(listonic_config.get("default_lists", {}))
+    defaults: dict[str, str] = {}
+    for profile, requested in configured.items():
+        if not isinstance(requested, str) or not requested.strip():
+            continue
+        profile_aliases = _mapping(list_aliases.get(profile, {}))
+        resolved = profile_aliases.get(requested, requested)
+        if isinstance(resolved, str) and resolved.strip():
+            defaults[profile] = resolved
+    return defaults
 
 
 def _merge_aliases(*values: c.Mapping[str, object]) -> dict[str, object]:
@@ -673,7 +717,15 @@ def _gate_specs(
                 message_da=message,
             )
 
-        result.append(ToolSpec(spec.name, spec.description, spec.parameters, handler))
+        result.append(
+            ToolSpec(
+                spec.name,
+                spec.description,
+                spec.parameters,
+                handler,
+                mutates=spec.mutates,
+            )
+        )
     return result
 
 

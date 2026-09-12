@@ -195,6 +195,52 @@ def test_spotify_schemas_reject_malformed_nullable_values() -> None:
         )
 
 
+def test_device_aliases_are_scoped_to_spotify_profile() -> None:
+    """Identical aliases cannot route a device across Spotify accounts."""
+    store = CredentialStore.memory_only()
+    home = store.connect(
+        "spotify", "home", refresh_token="refresh-home", scopes=_SCOPES
+    )
+    work = store.connect(
+        "spotify", "work", refresh_token="refresh-work", scopes=_SCOPES
+    )
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        requests.append((token, request.url.params.get("device_id", "")))
+        device = "home-id" if token == "access-home" else "work-id"
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "devices": [{"id": device, "name": "Speaker", "is_active": True}]
+                },
+            )
+        return httpx.Response(204)
+
+    provider = SpotifyProvider(
+        store,
+        accounts={"home": home, "work": work},
+        device_aliases={"home": {"speaker": "home-id"}, "work": {"speaker": "work-id"}},
+        refresh_callback=lambda refresh: TokenSet.from_expires_in(
+            f"access-{refresh.removeprefix('refresh-')}", 3600
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    for profile in ("home", "work"):
+        result = provider.control(
+            ToolContext({}), "pause", device_name="speaker", profile_name=profile
+        )
+        assert result.status is ToolStatus.OK
+    assert requests == [
+        ("access-home", ""),
+        ("access-home", "home-id"),
+        ("access-work", ""),
+        ("access-work", "work-id"),
+    ]
+
+
 def test_refresh_rotation_and_disconnect_keep_secrets_local() -> None:
     """Refresh rotation is stored in the credential backend and disconnect erases it."""
     calls: list[httpx.Request] = []

@@ -339,6 +339,7 @@ tools:
       required: []
 
 # Local routing configuration contains no credentials.
+mutations_enabled: true
 locale: da-DK
 timezone: Europe/Copenhagen
 device:
@@ -351,6 +352,7 @@ profiles:
     aliases: [Dan, mig]
 profile_aliases: {}
 calendar_aliases: {}
+# Deprecated aliases remain accepted only under device.default_profile.
 spotify_device_aliases: {}
 shopping_list_aliases: {}
 storage:
@@ -364,11 +366,15 @@ integrations:
   spotify:
     enabled: false
     default_profile: dan
+    # Device aliases are profile-scoped to prevent cross-account routing.
     device_aliases: {}
   listonic:
     enabled: false
     allow_unofficial: false
+    allow_unverified_item_removal: false
     list_aliases: {}
+    # Required per profile when a shopping tool omits list_name.
+    default_lists: {}
 scheduler:
   poll_seconds: 1
   lease_seconds: 30

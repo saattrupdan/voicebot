@@ -201,19 +201,26 @@ class _PersistedAuthHandler:
                 (item for item in relevant if profiles.get(item.profile_id) == profile),
                 None,
             )
-            state = "disconnected"
-            if record is not None and record.status == "connected":
-                state = "connected"
+            state = self._status_state(profile=profile, record=record)
             return IntegrationStatus(_normalise_provider(self.provider), profile, state)
         return [
             IntegrationStatus(
                 _normalise_provider(self.provider),
-                profiles.get(record.profile_id),
-                "connected" if record.status == "connected" else "disconnected",
+                profile_name,
+                self._status_state(profile=profile_name, record=record),
             )
             for record in relevant
-            if profiles.get(record.profile_id) is not None
+            if (profile_name := profiles.get(record.profile_id)) is not None
         ]
+
+    def _status_state(self, profile: str, record: object) -> str:
+        if record is None or getattr(record, "status", None) != "connected":
+            return "disconnected"
+        if self.provider != "listonic":
+            return "connected"
+        handler_status = self.handler.status(profile)
+        reported = getattr(handler_status, "state", None)
+        return reported if isinstance(reported, str) else "disconnected"
 
     def disconnect(self, profile: str) -> None:
         profiles = {item.id: item.name for item in self.storage.profiles.list()}

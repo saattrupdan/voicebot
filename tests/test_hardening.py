@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pathlib
+import threading
+import time
 import typing as t
 
 import pytest
@@ -45,6 +47,7 @@ def test_tool_operations_are_idempotent_and_redacted(tmp_path: pathlib.Path) -> 
                         "additionalProperties": False,
                     },
                     handler,
+                    mutates=True,
                 )
             ]
         )
@@ -61,6 +64,57 @@ def test_tool_operations_are_idempotent_and_redacted(tmp_path: pathlib.Path) -> 
         operation = storage.operations.get_by_key("mutate:call-1")
         assert operation is not None
         assert operation.status == "completed"
+    finally:
+        storage.close()
+
+
+def test_concurrent_identical_mutations_share_stored_result(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only the atomic operation owner executes while peers recover its result."""
+    storage = Storage(tmp_path / "state.sqlite")
+    calls = 0
+    started = threading.Event()
+
+    def handler(context: ToolContext, arguments: dict[str, object]) -> ToolResult:
+        nonlocal calls
+        del context, arguments
+        calls += 1
+        started.set()
+        time.sleep(0.05)
+        return ToolResult(ToolStatus.OK, data={"done": True})
+
+    schema: dict[str, object] = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+    runtime = ToolRuntime(
+        ToolRegistry([ToolSpec("mutate", "mutate", schema, handler, mutates=True)])
+    )
+    results: list[ToolResult] = []
+
+    def invoke() -> None:
+        results.append(
+            runtime.invoke(
+                "mutate",
+                {},
+                ToolContext({"storage": storage}, operation_id="same-call"),
+            )
+        )
+
+    first = threading.Thread(target=invoke)
+    second = threading.Thread(target=invoke)
+    first.start()
+    assert started.wait(timeout=1)
+    second.start()
+    first.join()
+    second.join()
+    try:
+        assert calls == 1
+        assert [result.status for result in results] == [ToolStatus.OK, ToolStatus.OK]
+        assert all(result.data == {"done": True} for result in results)
     finally:
         storage.close()
 

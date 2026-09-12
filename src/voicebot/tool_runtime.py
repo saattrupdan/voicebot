@@ -4,8 +4,10 @@ import collections.abc as c
 import datetime as dt
 import json
 import logging
+import math
 import re
 import threading
+import time
 import typing as t
 import uuid
 from dataclasses import dataclass, field
@@ -75,6 +77,7 @@ class ToolContext:
     cancel_event: threading.Event | None = None
     operation_id: str | None = None
     device_id: str | None = None
+    confirmation_resume: bool = False
 
     @property
     def cancelled(self) -> bool:
@@ -115,6 +118,7 @@ class ToolSpec:
     description: str
     parameters: dict[str, object]
     handler: ToolHandler
+    mutates: bool = False
 
     def as_openai_tool(self) -> dict[str, object]:
         """Return this definition in Chat Completions format."""
@@ -139,9 +143,12 @@ class ToolRegistry:
             self.register(spec=spec)
 
     def register(self, spec: ToolSpec) -> None:
-        """Register one tool, rejecting duplicate names."""
+        """Register one tool, rejecting duplicate names and malformed schemas."""
         if spec.name in self._specs:
             raise ValueError(f"Tool already registered: {spec.name}")
+        error = validate_schema(schema=spec.parameters)
+        if error is not None:
+            raise ValueError(f"Invalid schema for {spec.name}: {error}")
         self._specs[spec.name] = spec
 
     def get(self, name: str) -> ToolSpec | None:
@@ -152,6 +159,9 @@ class ToolRegistry:
         """Replace a registered adapter, for a later provider registration."""
         if spec.name not in self._specs:
             raise KeyError(f"Tool is not allow-listed: {spec.name}")
+        error = validate_schema(schema=spec.parameters)
+        if error is not None:
+            raise ValueError(f"Invalid schema for {spec.name}: {error}")
         self._specs[spec.name] = spec
 
     @property
@@ -201,9 +211,12 @@ class LegacyToolAdapter:
 class ToolRuntime:
     """Validate and invoke tools without dynamic dispatch or retries."""
 
-    def __init__(self, registry: ToolRegistry | None = None) -> None:
-        """Initialise the runtime with a closed registry."""
+    def __init__(
+        self, registry: ToolRegistry | None = None, *, mutations_enabled: bool = True
+    ) -> None:
+        """Initialise the runtime with a closed registry and mutation policy."""
         self.registry = registry or ToolRegistry()
+        self.mutations_enabled = mutations_enabled
 
     def register(self, spec: ToolSpec) -> None:
         """Register an allow-listed tool before serving requests."""
@@ -256,13 +269,19 @@ class ToolRuntime:
                 operation_id=operation_id,
                 message_da="Handlingen blev afbrudt.",
             )
+        if spec.mutates and not self.mutations_enabled:
+            return ToolResult(
+                status=ToolStatus.UNAVAILABLE,
+                operation_id=operation_id,
+                message_da="Ændringer er deaktiveret i konfigurationen.",
+                retryable=False,
+            )
 
         typed_arguments = arguments if isinstance(arguments, dict) else {}
-        operations = _operations(context)
+        operations = _operations(context) if spec.mutates else None
         operation = None
         if operations is not None:
             key = f"{name}:{operation_id}"
-            existing = operations.get_by_key(key)
             profile_id = context.state.get("profile_id")
             profiles = getattr(context.state.get("storage"), "profiles", None)
             if (
@@ -271,29 +290,23 @@ class ToolRuntime:
                 and profiles.get(profile_id) is None
             ):
                 profile_id = None
-            operation = operations.start(
+            acquisition = operations.acquire(
                 key,
                 name,
                 profile_id=profile_id if isinstance(profile_id, str) else None,
                 request=typed_arguments,
                 operation_id=operation_id,
             )
-            if operation.status == "completed" and operation.result is not None:
-                return _result_from_record(operation.result, operation_id)
-            if existing is not None and operation.status in {"failed", "started"}:
-                # A started provider call is deliberately not replayed: its remote
-                # outcome is unknown.  Confirmation requests are the sole resumable
-                # operation and are marked explicitly below.
-                return ToolResult(
-                    status=ToolStatus.UNAVAILABLE,
-                    operation_id=operation_id,
-                    message_da="Handlingen har et uklart resultat og gentages ikke.",
-                    retryable=False,
-                )
-            if operation.status == "awaiting_confirmation" and not context.state.get(
-                "_resume_confirmation"
+            operation = acquisition.operation
+            resuming = context.confirmation_resume
+            if not acquisition.owned and not (
+                operation.status == "pending_confirmation" and resuming
             ):
-                return _result_from_record(operation.result or {}, operation_id)
+                return _recover_operation(
+                    operations=operations,
+                    operation_id=operation.id,
+                    result_operation_id=operation_id,
+                )
 
         logger.info(
             "Invoking tool name=%s operation_id=%s", _safe_name(name), operation_id
@@ -347,7 +360,7 @@ class ToolRuntime:
         if operations is not None and operation is not None:
             record = normalised.as_dict()
             if normalised.status is ToolStatus.CONFIRMATION_REQUIRED:
-                operations.update(operation.id, "awaiting_confirmation", result=record)
+                operations.update(operation.id, "pending_confirmation", result=record)
             elif normalised.status is ToolStatus.OK:
                 operations.complete(operation.id, result=record)
                 _remember_committed(context, record)
@@ -361,6 +374,30 @@ def _operations(context: ToolContext) -> OperationRepository | None:
     storage = context.state.get("storage")
     repository = getattr(storage, "operations", None)
     return t.cast(OperationRepository, repository) if repository is not None else None
+
+
+def _recover_operation(
+    operations: OperationRepository, operation_id: str, result_operation_id: str
+) -> ToolResult:
+    """Wait briefly for an in-flight owner, then return its durable outcome."""
+    deadline = time.monotonic() + 5.0
+    while True:
+        operation = operations.get(operation_id)
+        if operation is None:
+            break
+        if operation.status != "started":
+            if operation.result is not None:
+                return _result_from_record(operation.result, result_operation_id)
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
+    return ToolResult(
+        status=ToolStatus.UNAVAILABLE,
+        operation_id=result_operation_id,
+        message_da="Handlingen har et uklart resultat og gentages ikke.",
+        retryable=False,
+    )
 
 
 def _result_from_record(record: dict[str, object], operation_id: str) -> ToolResult:
@@ -394,6 +431,24 @@ def _remember_committed(context: ToolContext, result: dict[str, object]) -> None
         committed.append(result)
 
 
+def validate_schema(schema: dict[str, object]) -> str | None:
+    """Validate the strict JSON Schema subset exposed to models."""
+    error = _validate_schema_node(schema=schema, path="parameters")
+    if error is not None:
+        return error
+    if schema.get("type") != "object":
+        return "parameters must have object type"
+    properties = schema.get("properties")
+    required = schema.get("required")
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return "parameters must define properties and required"
+    if set(required) != set(properties):
+        return "every object property must be required"
+    if schema.get("additionalProperties") is not False:
+        return "parameters must reject additional properties"
+    return None
+
+
 def validate_arguments(schema: dict[str, object], arguments: object) -> str | None:
     """Validate an argument object against a strict JSON schema.
 
@@ -401,6 +456,98 @@ def validate_arguments(schema: dict[str, object], arguments: object) -> str | No
     model-visible tools, keeping validation deterministic and dependency-free.
     """
     return _validate_value(schema=schema, value=arguments, path="arguments")
+
+
+def _validate_schema_node(schema: dict[str, object], path: str) -> str | None:
+    allowed_types = {
+        "object",
+        "array",
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "null",
+    }
+    raw_type = schema.get("type")
+    types = [raw_type] if isinstance(raw_type, str) else raw_type
+    if types is not None:
+        if (
+            not isinstance(types, list)
+            or not types
+            or any(
+                not isinstance(item, str) or item not in allowed_types for item in types
+            )
+            or len(set(types)) != len(types)
+        ):
+            return f"{path}.type is invalid"
+    enum = schema.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not enum:
+            return f"{path}.enum is invalid"
+        if isinstance(types, list) and any(
+            not any(_matches_type(value=item, type_name=kind) for kind in types)
+            for item in enum
+        ):
+            return f"{path}.enum contains a value outside its type"
+    properties = schema.get("properties")
+    if properties is not None:
+        if not isinstance(properties, dict):
+            return f"{path}.properties is invalid"
+        for name, child in properties.items():
+            if not isinstance(name, str) or not isinstance(child, dict):
+                return f"{path}.properties is invalid"
+            error = _validate_schema_node(child, f"{path}.properties.{name}")
+            if error is not None:
+                return error
+    required = schema.get("required")
+    if required is not None:
+        if (
+            not isinstance(required, list)
+            or any(not isinstance(item, str) for item in required)
+            or len(set(required)) != len(required)
+            or not isinstance(properties, dict)
+            or not set(required) <= set(properties)
+        ):
+            return f"{path}.required is invalid"
+    additional = schema.get("additionalProperties")
+    if additional is not None and not isinstance(additional, (bool, dict)):
+        return f"{path}.additionalProperties is invalid"
+    if isinstance(additional, dict):
+        error = _validate_schema_node(additional, f"{path}.additionalProperties")
+        if error is not None:
+            return error
+    items = schema.get("items")
+    if items is not None:
+        if not isinstance(items, dict):
+            return f"{path}.items is invalid"
+        error = _validate_schema_node(items, f"{path}.items")
+        if error is not None:
+            return error
+    one_of = schema.get("oneOf")
+    if one_of is not None:
+        if not isinstance(one_of, list) or not one_of:
+            return f"{path}.oneOf is invalid"
+        for index, branch in enumerate(one_of):
+            if not isinstance(branch, dict):
+                return f"{path}.oneOf is invalid"
+            error = _validate_schema_node(branch, f"{path}.oneOf[{index}]")
+            if error is not None:
+                return error
+    for keyword in ("minimum", "maximum"):
+        bound = schema.get(keyword)
+        if bound is not None and (
+            not isinstance(bound, (int, float))
+            or isinstance(bound, bool)
+            or not math.isfinite(bound)
+        ):
+            return f"{path}.{keyword} is invalid"
+    for keyword in ("minLength", "minItems"):
+        bound = schema.get(keyword)
+        if bound is not None and (
+            not isinstance(bound, int) or isinstance(bound, bool) or bound < 0
+        ):
+            return f"{path}.{keyword} is invalid"
+    return None
 
 
 def _validate_value(schema: dict[str, object], value: object, path: str) -> str | None:
@@ -416,19 +563,22 @@ def _validate_value(schema: dict[str, object], value: object, path: str) -> str 
 
     types = schema.get("type")
     allowed_types = [types] if isinstance(types, str) else types
-    if isinstance(allowed_types, list):
-        if value is None and "null" in allowed_types:
-            return None
-        if not any(
-            _matches_type(value=value, type_name=item) for item in allowed_types
-        ):
-            return f"{path} has the wrong type"
-    if value is None:
-        return None
+    if isinstance(allowed_types, list) and not any(
+        _matches_type(value=value, type_name=item) for item in allowed_types
+    ):
+        return f"{path} has the wrong type"
 
     enum = schema.get("enum")
     if isinstance(enum, list) and value not in enum:
         return f"{path} is not an allowed value"
+    if value is None:
+        return None
+    if (
+        isinstance(value, float)
+        and not isinstance(value, bool)
+        and not math.isfinite(value)
+    ):
+        return f"{path} must be finite"
     if isinstance(value, str):
         if "minLength" in schema and len(value) < t.cast(int, schema["minLength"]):
             return f"{path} is too short"

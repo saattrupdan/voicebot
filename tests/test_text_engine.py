@@ -47,7 +47,13 @@ def test_text_engine_uses_melious_chat_completions(
         "function": {
             "name": "lookup",
             "description": "Look something up.",
-            "parameters": {"type": "object", "properties": {}},
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
         },
     }
 

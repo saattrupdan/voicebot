@@ -75,7 +75,11 @@ class SpotifyProvider:
         accounts: c.Mapping[str, ProviderAccount | CredentialReference] | None = None,
         profile_aliases: c.Mapping[str, str] | c.Iterable[tuple[str, str]] = (),
         default_profile: str | None = None,
-        device_aliases: c.Mapping[str, str] | c.Iterable[tuple[str, str]] = (),
+        device_aliases: (
+            c.Mapping[str, str]
+            | c.Mapping[str, c.Mapping[str, str]]
+            | c.Iterable[tuple[str, str]]
+        ) = (),
         default_device: str | None = None,
         http_client: httpx.Client | None = None,
         auth_handler: SpotifyAuthHandler | None = None,
@@ -108,14 +112,30 @@ class SpotifyProvider:
             ),
         )
         self.default_profile = default_profile
-        self._device_aliases = t.cast(
-            tuple[tuple[str, str], ...],
-            tuple(
-                device_aliases.items()
-                if isinstance(device_aliases, c.Mapping)
-                else t.cast(c.Iterable[tuple[str, str]], device_aliases)
-            ),
-        )
+        self._device_aliases: dict[str, tuple[tuple[str, str], ...]] = {}
+        if isinstance(device_aliases, c.Mapping) and all(
+            isinstance(value, c.Mapping) for value in device_aliases.values()
+        ):
+            self._device_aliases = {
+                str(profile): tuple(
+                    (str(alias), str(target)) for alias, target in aliases.items()
+                )
+                for profile, aliases in device_aliases.items()
+                if isinstance(aliases, c.Mapping)
+            }
+        else:
+            profile = default_profile
+            if profile is None and len(self._accounts) == 1:
+                profile = next(iter(self._accounts))
+            if profile is not None:
+                values = (
+                    device_aliases.items()
+                    if isinstance(device_aliases, c.Mapping)
+                    else t.cast(c.Iterable[tuple[str, str]], device_aliases)
+                )
+                self._device_aliases[profile] = tuple(
+                    (str(alias), str(target)) for alias, target in values
+                )
         self.default_device = default_device
         self._known_secrets: set[str] = set()
 
@@ -226,7 +246,7 @@ class SpotifyProvider:
                     data={
                         "name": self._safe_text(match.get("name")),
                         "media_type": item_type,
-                        "device": self._device_label(device),
+                        "device": self._device_label(device, account.profile),
                     },
                 ),
                 context,
@@ -281,7 +301,10 @@ class SpotifyProvider:
                 ToolResult(
                     status=ToolStatus.OK,
                     message_da="Afspilningen er opdateret.",
-                    data={"action": action, "device": self._device_label(device)},
+                    data={
+                        "action": action,
+                        "device": self._device_label(device, account.profile),
+                    },
                 ),
                 context,
             )
@@ -371,12 +394,12 @@ class SpotifyProvider:
             if device_error is not None:
                 return self._with_operation(device_error, context)
             assert device is not None
-            if volume_percent > 80 and not context.state.get("_resume_confirmation"):
+            if volume_percent > 80 and not context.confirmation_resume:
                 manager = context.state.get("confirmation_manager")
                 request = getattr(manager, "request", None)
                 resolved = {
                     "volume_percent": volume_percent,
-                    "device_name": self._device_label(device),
+                    "device_name": self._device_label(device, account.profile),
                     "action": "spotify_set_volume",
                 }
                 if callable(request) and not request(
@@ -385,7 +408,7 @@ class SpotifyProvider:
                     arguments={
                         "profile_name": profile_name,
                         "volume_percent": volume_percent,
-                        "device_name": self._device_label(device),
+                        "device_name": self._device_label(device, account.profile),
                     },
                     resolved=resolved,
                 ):
@@ -417,7 +440,7 @@ class SpotifyProvider:
                     message_da="Lydstyrken er ændret.",
                     data={
                         "volume_percent": volume_percent,
-                        "device": self._device_label(device),
+                        "device": self._device_label(device, account.profile),
                     },
                 ),
                 context,
@@ -456,7 +479,7 @@ class SpotifyProvider:
             if isinstance(device_payload, dict):
                 device = self._device_from_payload(device_payload)
                 if device is not None:
-                    data["device"] = self._device_label(device)
+                    data["device"] = self._device_label(device, account.profile)
             return self._with_operation(
                 ToolResult(status=ToolStatus.OK, data=data), context
             )
@@ -608,23 +631,28 @@ class SpotifyProvider:
         if requested is None and self.default_device is None:
             if len(devices) == 1:
                 return devices[0], None
-            labels = sorted({self._device_label(device) for device in devices})
+            labels = sorted(
+                {self._device_label(device, account.profile) for device in devices}
+            )
             return None, ToolResult(
                 status=ToolStatus.NEEDS_CLARIFICATION,
                 message_da="Hvilken Spotify-enhed mener du?",
                 candidates=self._candidate_values(labels),
             )
-        configured = AliasResolver(aliases=self._device_aliases).resolve(requested)
+        device_aliases = self._device_aliases.get(account.profile, ())
+        configured = AliasResolver(aliases=device_aliases).resolve(requested)
         if configured.status is ResolutionStatus.NEEDS_CLARIFICATION:
             labels = self._labels_for_references(
-                devices=devices, references=configured.candidates
+                devices=devices,
+                references=configured.candidates,
+                profile=account.profile,
             )
             return None, ToolResult(
                 status=ToolStatus.NEEDS_CLARIFICATION,
                 message_da="Hvilken Spotify-enhed mener du?",
                 candidates=self._candidate_values(labels),
             )
-        aliases = list(self._device_aliases)
+        aliases = list(device_aliases)
         aliases.extend((device.name, device.device_id) for device in devices)
         result = (
             configured
@@ -633,7 +661,7 @@ class SpotifyProvider:
         )
         if result.status is ResolutionStatus.NEEDS_CLARIFICATION:
             labels = self._labels_for_references(
-                devices=devices, references=result.candidates
+                devices=devices, references=result.candidates, profile=account.profile
             )
             return None, ToolResult(
                 status=ToolStatus.NEEDS_CLARIFICATION,
@@ -653,7 +681,9 @@ class SpotifyProvider:
             or normalise_alias(device.name) == normalise_alias(result.reference)
         ]
         if len(matches) != 1:
-            candidates = sorted({self._device_label(device) for device in matches})
+            candidates = sorted(
+                {self._device_label(device, account.profile) for device in matches}
+            )
             return None, ToolResult(
                 status=ToolStatus.NEEDS_CLARIFICATION
                 if candidates
@@ -911,8 +941,8 @@ class SpotifyProvider:
             volume_percent=volume if isinstance(volume, int) else None,
         )
 
-    def _device_label(self, device: SpotifyDevice) -> str:
-        for alias, target in self._device_aliases:
+    def _device_label(self, device: SpotifyDevice, profile: str) -> str:
+        for alias, target in self._device_aliases.get(profile, ()):
             if normalise_alias(target) in {
                 normalise_alias(device.name),
                 normalise_alias(device.device_id),
@@ -921,12 +951,12 @@ class SpotifyProvider:
         return self._safe_text(device.name)
 
     def _labels_for_references(
-        self, devices: list[SpotifyDevice], references: c.Iterable[str]
+        self, devices: list[SpotifyDevice], references: c.Iterable[str], profile: str
     ) -> list[str]:
         reference_set = set(references)
         return sorted(
             {
-                self._device_label(device)
+                self._device_label(device, profile)
                 for device in devices
                 if device.device_id in reference_set
                 or device.name in reference_set
