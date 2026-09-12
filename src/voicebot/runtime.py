@@ -140,6 +140,13 @@ class ConfirmationManager:
                 status=ToolStatus.CONFLICT,
                 message_da="Bekræftelsen er udløbet eller allerede brugt.",
             )
+        if resolved.status == "expired":
+            return ToolResult(
+                status=ToolStatus.INVALID_REQUEST,
+                operation_id=resolved.operation_id,
+                message_da="Bekræftelsen er udløbet.",
+                retryable=False,
+            )
         if not accepted:
             result = ToolResult(
                 status=ToolStatus.OK,
