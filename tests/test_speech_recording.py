@@ -251,6 +251,31 @@ def test_wake_word_path_works_outside_follow_up_window(
     synthesiser.assert_called_once()
 
 
+def test_post_wake_onset_at_aligned_deadline_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Speech may begin exactly where an aligned onset window ends."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    chunks = [_chunk(2_000), _chunk(0), _chunk(0), _chunk(2_000), _chunk(0)]
+    monkeypatch.setattr(speech_recording, "record", _recorder(chunks))
+    wake_word = MagicMock()
+    wake_word.predict.return_value = {"hey_jarvis": 1.0}
+    synthesiser = MagicMock()
+    monkeypatch.setattr(speech_recording, "synthesise_speech", synthesiser)
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=MagicMock(),
+        cfg=_config(max_seconds_silence=0.08),
+    )
+
+    assert started is not None
+    assert audio.size > 0
+    synthesiser.assert_called_once()
+
+
 def test_post_wake_onset_just_before_non_aligned_deadline_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -325,7 +350,14 @@ def test_post_wake_onset_window_expires_before_late_speech(
     """Speech after the post-acknowledgement deadline needs a new wake word."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
     recorder = MagicMock()
-    frames = [_chunk(2_000), _chunk(0), _chunk(100), _chunk(100), _chunk(2_000)]
+    frames = [
+        _chunk(2_000),
+        _chunk(0),
+        _chunk(100),
+        _chunk(100),
+        _chunk(100),
+        _chunk(2_000),
+    ]
     monkeypatch.setattr(
         speech_recording, "record", _recorder(frames, recorder=recorder)
     )
@@ -345,7 +377,7 @@ def test_post_wake_onset_window_expires_before_late_speech(
     assert audio.dtype == np.int16
     assert audio.size == 0
     assert started is None
-    assert recorder.read.call_count == 4
+    assert recorder.read.call_count == 5
     assert wake_word.reset.call_count == 2
     synthesiser.assert_called_once()
 

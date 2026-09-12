@@ -451,7 +451,7 @@ def record_speech(
                             detector.reset_activity()
                             wake_word_model.reset()
                             return np.empty(0, dtype=np.int16), None
-                    elif post_wake_samples >= post_wake_onset_samples:
+                    elif post_wake_samples > post_wake_onset_samples:
                         detector.reset_activity()
                         wake_word_model.reset()
                         return np.empty(0, dtype=np.int16), None
