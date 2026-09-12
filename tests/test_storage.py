@@ -5,12 +5,25 @@ from __future__ import annotations
 import datetime as dt
 import pathlib
 import sqlite3
+import threading
 
 import pytest
 
 from voicebot.storage import CURRENT_SCHEMA_VERSION, Database, Storage, normalise_alias
 
 NOW = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)
+
+
+def test_fresh_filesystem_database_creates_parent_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Opening a new database also creates its nested parent directory."""
+    path = tmp_path / "state" / "nested" / "voicebot.sqlite"
+
+    with Database(path) as database:
+        assert path.is_file()
+        assert database.schema_version == CURRENT_SCHEMA_VERSION
+        assert database.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
 def test_migrations_are_idempotent_and_enable_foreign_keys() -> None:
@@ -24,6 +37,75 @@ def test_migrations_are_idempotent_and_enable_foreign_keys() -> None:
         )
         assert database.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         database.connection.execute("PRAGMA user_version")
+
+
+def test_transactions_are_isolated_and_rollback_across_threads() -> None:
+    """A concurrent transaction waits and cannot inherit a rollback."""
+    errors: list[BaseException] = []
+    first_ready = threading.Event()
+    second_attempted = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    second_count: list[int] = []
+
+    with Database() as database:
+        database.connection.execute(
+            "CREATE TABLE transaction_probe (value TEXT NOT NULL)"
+        )
+
+        def rollback_worker() -> None:
+            try:
+                with database.transaction(immediate=True) as connection:
+                    connection.execute(
+                        "INSERT INTO transaction_probe(value) VALUES (?)",
+                        ("rolled back",),
+                    )
+                    first_ready.set()
+                    if not release_first.wait(timeout=5):
+                        raise AssertionError("timed out waiting to roll back")
+                    raise RuntimeError("test rollback")
+            except RuntimeError:
+                pass
+            except BaseException as error:
+                errors.append(error)
+
+        def commit_worker() -> None:
+            second_attempted.set()
+            try:
+                with database.transaction(immediate=True) as connection:
+                    second_entered.set()
+                    second_count.append(
+                        connection.execute(
+                            "SELECT count(*) FROM transaction_probe"
+                        ).fetchone()[0]
+                    )
+                    connection.execute(
+                        "INSERT INTO transaction_probe(value) VALUES (?)",
+                        ("committed",),
+                    )
+            except BaseException as error:
+                errors.append(error)
+
+        first_thread = threading.Thread(target=rollback_worker)
+        second_thread = threading.Thread(target=commit_worker)
+        first_thread.start()
+        assert first_ready.wait(timeout=5)
+        second_thread.start()
+        assert second_attempted.wait(timeout=5)
+        entered_before_release = second_entered.wait(timeout=0.1)
+        release_first.set()
+        first_thread.join(timeout=5)
+        second_thread.join(timeout=5)
+
+        assert not first_thread.is_alive()
+        assert not second_thread.is_alive()
+        assert errors == []
+        assert not entered_before_release
+        assert second_count == [0]
+        rows = database.connection.execute(
+            "SELECT value FROM transaction_probe"
+        ).fetchall()
+        assert [row[0] for row in rows] == ["committed"]
 
 
 def test_aliases_are_normalised_and_unique(tmp_path: pathlib.Path) -> None:
