@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from .storage.repositories import OperationRepository, redact
+
 logger = logging.getLogger(__name__)
 
 
@@ -255,14 +257,51 @@ class ToolRuntime:
                 message_da="Handlingen blev afbrudt.",
             )
 
+        typed_arguments = arguments if isinstance(arguments, dict) else {}
+        operations = _operations(context)
+        operation = None
+        if operations is not None:
+            key = f"{name}:{operation_id}"
+            existing = operations.get_by_key(key)
+            profile_id = context.state.get("profile_id")
+            profiles = getattr(context.state.get("storage"), "profiles", None)
+            if (
+                isinstance(profile_id, str)
+                and profiles is not None
+                and profiles.get(profile_id) is None
+            ):
+                profile_id = None
+            operation = operations.start(
+                key,
+                name,
+                profile_id=profile_id if isinstance(profile_id, str) else None,
+                request=typed_arguments,
+                operation_id=operation_id,
+            )
+            if operation.status == "completed" and operation.result is not None:
+                return _result_from_record(operation.result, operation_id)
+            if existing is not None and operation.status in {"failed", "started"}:
+                # A started provider call is deliberately not replayed: its remote
+                # outcome is unknown.  Confirmation requests are the sole resumable
+                # operation and are marked explicitly below.
+                return ToolResult(
+                    status=ToolStatus.UNAVAILABLE,
+                    operation_id=operation_id,
+                    message_da="Handlingen har et uklart resultat og gentages ikke.",
+                    retryable=False,
+                )
+            if operation.status == "awaiting_confirmation" and not context.state.get(
+                "_resume_confirmation"
+            ):
+                return _result_from_record(operation.result or {}, operation_id)
+
         logger.info(
             "Invoking tool name=%s operation_id=%s", _safe_name(name), operation_id
         )
-        typed_arguments = arguments if isinstance(arguments, dict) else {}
         try:
             result = spec.handler(context, typed_arguments)
         except CancelledError:
-            return ToolResult(
+            result = ToolResult(
                 status=ToolStatus.CANCELLED,
                 operation_id=operation_id,
                 message_da="Handlingen blev afbrudt.",
@@ -271,6 +310,8 @@ class ToolRuntime:
             logger.error(
                 "Tool failed name=%s operation_id=%s", _safe_name(name), operation_id
             )
+            if operations is not None and operation is not None:
+                operations.fail(operation.id, "tool failed")
             return ToolResult(
                 status=ToolStatus.UNAVAILABLE,
                 operation_id=operation_id,
@@ -291,15 +332,66 @@ class ToolRuntime:
                 retryable=True,
             )
 
-        return ToolResult(
+        safe_message = redact(result.message_da)
+        safe_data = redact(result.data) if result.data is not None else None
+        safe_candidates = redact(result.candidates)
+        normalised = ToolResult(
             status=result.status,
             operation_id=operation_id,
-            message_da=result.message_da,
-            data=result.data,
-            candidates=result.candidates,
+            message_da=safe_message if isinstance(safe_message, str) else "",
+            data=safe_data if isinstance(safe_data, dict) else None,
+            candidates=safe_candidates if isinstance(safe_candidates, list) else [],
             retryable=result.retryable,
             legacy_message=result.legacy_message,
         )
+        if operations is not None and operation is not None:
+            record = normalised.as_dict()
+            if normalised.status is ToolStatus.CONFIRMATION_REQUIRED:
+                operations.update(operation.id, "awaiting_confirmation", result=record)
+            elif normalised.status is ToolStatus.OK:
+                operations.complete(operation.id, result=record)
+                _remember_committed(context, record)
+            else:
+                operations.update(operation.id, "failed", result=record)
+        return normalised
+
+
+def _operations(context: ToolContext) -> OperationRepository | None:
+    """Return the optional storage operation repository from the context."""
+    storage = context.state.get("storage")
+    repository = getattr(storage, "operations", None)
+    return t.cast(OperationRepository, repository) if repository is not None else None
+
+
+def _result_from_record(record: dict[str, object], operation_id: str) -> ToolResult:
+    """Rehydrate a safe persisted tool result."""
+    raw_status = record.get("status", ToolStatus.UNAVAILABLE.value)
+    try:
+        status = ToolStatus(str(raw_status))
+    except ValueError:
+        status = ToolStatus.UNAVAILABLE
+    data = record.get("data")
+    candidates = record.get("candidates", [])
+    return ToolResult(
+        status=status,
+        operation_id=operation_id,
+        message_da=str(record.get("message_da", "")),
+        data=data if isinstance(data, dict) else None,
+        candidates=candidates if isinstance(candidates, list) else [],
+        retryable=record.get("retryable") is True,
+        legacy_message=(
+            str(record["legacy_message"])
+            if isinstance(record.get("legacy_message"), str)
+            else None
+        ),
+    )
+
+
+def _remember_committed(context: ToolContext, result: dict[str, object]) -> None:
+    """Keep a completed result available if response history is rolled back."""
+    committed = context.state.setdefault("committed_operation_results", [])
+    if isinstance(committed, list):
+        committed.append(result)
 
 
 def validate_arguments(schema: dict[str, object], arguments: object) -> str | None:

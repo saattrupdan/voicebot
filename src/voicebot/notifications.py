@@ -141,8 +141,16 @@ class NotificationDispatcher:
                     "Leaving notification available for recovery: %s", notification.id
                 )
         except Exception:
-            # The lease makes an interrupted callback recoverable after a restart.
-            logger.exception("Notification callback failed id=%s", notification.id)
+            # A user cancellation is an explicit dismissal even if the audio backend
+            # raises while being stopped.  Other failures remain leased and retryable.
+            with self._lock:
+                dismissed = notification.id in self._dismissed
+                if dismissed:
+                    self._dismissed.discard(notification.id)
+            if dismissed:
+                self.dismiss(notification)
+            else:
+                logger.exception("Notification callback failed id=%s", notification.id)
         finally:
             with self._lock:
                 self._active.pop(notification.id, None)

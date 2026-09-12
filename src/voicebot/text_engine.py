@@ -91,6 +91,10 @@ class TextEngine:
         self.runtime = runtime or ToolRuntime(
             registry=tool_module.build_registry(tools=raw_tools)
         )
+        # The assembled registry is the source of truth: this also keeps legacy
+        # tools visible when a deployment config predates the integration plan.
+        if runtime is not None or assembled is not None:
+            self.tools = t.cast(list[ChatCompletionToolParam], self.runtime.schemas())
         self.state = state if state is not None else {}
         self.integration_runtime = assembled
 
@@ -120,8 +124,11 @@ class TextEngine:
         Returns:
             The completed turn outcome.
         """
+        # Results are scoped to one turn; a cancellation consumes this hand-off.
+        self.state.pop("committed_operation_results", None)
         if is_end_conversation(text=prompt):
             logger.info("The user ended the conversation.")
+            self.state.pop("committed_history_notice", None)
             self.reset_conversation()
             return TurnResult(action=TurnAction.END)
 
@@ -147,6 +154,7 @@ class TextEngine:
             last_response_time=last_response_time,
             current_response_time=current_response_time,
         )
+        self._inject_committed_notice()
         self.conversation.append(dict(role="user", content=prompt))
         conversation_with_user = list(self.conversation)
 
@@ -164,6 +172,9 @@ class TextEngine:
 
         if active_cancel.is_set():
             self.conversation = conversation_with_user
+            committed = self.state.pop("committed_operation_results", [])
+            if isinstance(committed, list) and committed:
+                self.state["committed_history_notice"] = committed
         if result.action is TurnAction.END:
             self.reset_conversation()
         elif result.text:
@@ -173,6 +184,23 @@ class TextEngine:
     def reset_conversation(self) -> None:
         """Clear the current conversational history."""
         self.conversation.clear()
+
+    def _inject_committed_notice(self) -> None:
+        """Tell the next model turn about mutations completed before barge-in."""
+        notices = self.state.pop("committed_history_notice", [])
+        if not isinstance(notices, list):
+            return
+        for operation in notices:
+            if isinstance(operation, dict):
+                self.conversation.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Denne handling er allerede gennemført. "
+                            + json.dumps(operation, ensure_ascii=False)
+                        ),
+                    }
+                )
 
     def _start_conversation_if_needed(
         self, last_response_time: dt.datetime, current_response_time: dt.datetime
@@ -363,7 +391,9 @@ class TextEngine:
             else:
                 name = str(tool_call.function.name)
                 response = self._call_tool(
-                    name=name, arguments_json=str(tool_call.function.arguments)
+                    name=name,
+                    arguments_json=str(tool_call.function.arguments),
+                    operation_id=str(tool_call.id),
                 )
                 identifier = str(tool_call.id)
             needs_followup = needs_followup or response.needs_followup
@@ -379,7 +409,9 @@ class TextEngine:
             function = t.cast(dict[str, str], tool_call["function"])
             name = function["name"]
             tool_response = self._call_tool(
-                name=name, arguments_json=function["arguments"]
+                name=name,
+                arguments_json=function["arguments"],
+                operation_id=str(tool_call["id"]),
             )
             needs_followup = needs_followup or tool_response.needs_followup
             self._append_tool_response(
@@ -400,7 +432,9 @@ class TextEngine:
             dict(role="tool", tool_call_id=identifier, content=content)
         )
 
-    def _call_tool(self, name: str, arguments_json: str) -> ToolResult:
+    def _call_tool(
+        self, name: str, arguments_json: str, operation_id: str | None = None
+    ) -> ToolResult:
         """Parse, validate, and invoke one model-requested tool exactly once."""
         try:
             arguments: object = json.loads(arguments_json)
@@ -408,7 +442,14 @@ class TextEngine:
             arguments = None
         cancel_event = self.state.get("cancel_event")
         event = cancel_event if isinstance(cancel_event, threading.Event) else None
-        context = ToolContext(state=self.state, cancel_event=event)
+        configured_device = self.state.get("device_id")
+        device_id = configured_device if isinstance(configured_device, str) else None
+        context = ToolContext(
+            state=self.state,
+            cancel_event=event,
+            operation_id=operation_id,
+            device_id=device_id,
+        )
         return self.runtime.invoke(name=name, arguments=arguments, context=context)
 
     def _clean_response(self, text: str) -> str:

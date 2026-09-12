@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc as c
+import dataclasses
 import datetime as dt
 import os
 import pathlib
@@ -12,7 +13,14 @@ from dataclasses import dataclass
 
 from omegaconf import DictConfig, OmegaConf
 
-from .auth import CredentialStore, MemoryCredentialBackend, ProviderAccount
+from .auth import (
+    ConnectionStatus,
+    CredentialStore,
+    MemoryCredentialBackend,
+    ProviderAccount,
+)
+from .auth.google import GoogleCalendarAuthHandler
+from .auth.spotify import SpotifyAuthHandler
 from .notifications import NotificationCallback, NotificationDispatcher
 from .providers.google_calendar import GoogleCalendarProvider
 from .providers.listonic import ListonicProvider
@@ -34,6 +42,128 @@ from .tools.reminders import (
 from .tools.shopping import ShoppingTools
 from .tools.spotify import build_spotify_tools
 from .tools.timer import list_timers, set_timer, stop_timer
+
+
+class ConfirmationManager:
+    """Persist and resume destructive actions for one physical bot device."""
+
+    def __init__(self, runtime: IntegrationRuntime, *, expiry: dt.timedelta) -> None:
+        """Create a manager backed by the runtime's SQLite database."""
+        self.runtime = runtime
+        self.expiry = expiry
+
+    def request(
+        self,
+        context: ToolContext,
+        *,
+        action: str,
+        arguments: dict[str, object],
+        resolved: dict[str, object],
+    ) -> bool:
+        """Create a device-bound confirmation and return whether it was accepted."""
+        profile_id = context.state.get("profile_id")
+        if (
+            action not in {"remove_shopping_item", "spotify_set_volume"}
+            or not isinstance(profile_id, str)
+            or self.runtime.storage.profiles.get(profile_id) is None
+            or not context.device_id
+        ):
+            return False
+        safe_arguments = {
+            key: value
+            for key, value in arguments.items()
+            if key
+            in {
+                "profile_name",
+                "list_name",
+                "item_name",
+                "volume_percent",
+                "device_name",
+            }
+        }
+        operation_id = context.operation_id
+        if (
+            operation_id is not None
+            and self.runtime.storage.operations.get(operation_id) is None
+        ):
+            operation_id = None
+        pending = self.runtime.storage.confirmations.create(
+            profile_id=profile_id,
+            action=action,
+            payload={
+                "arguments": safe_arguments,
+                "resolved": {
+                    key: value
+                    for key, value in resolved.items()
+                    if key != "provider_id"
+                },
+                "device_id": context.device_id,
+            },
+            expires_at=dt.datetime.now(dt.UTC) + self.expiry,
+            operation_id=operation_id,
+        )
+        context.state["pending_confirmation_id"] = pending.id
+        return False
+
+    def resolve(
+        self,
+        accepted: bool,
+        device_id: str | None = None,
+        arguments: dict[str, object] | None = None,
+    ) -> ToolResult:
+        """Atomically resolve the current confirmation and execute it once."""
+        profile_id = self.runtime.state.get("profile_id")
+        pending_id = self.runtime.state.get("pending_confirmation_id")
+        current_device = device_id or self.runtime.state.get("device_id")
+        if not isinstance(profile_id, str) or not isinstance(pending_id, str):
+            return ToolResult(
+                status=ToolStatus.NOT_FOUND,
+                message_da="Der er ingen afventende bekræftelse.",
+            )
+        pending = self.runtime.storage.confirmations.get(pending_id)
+        if (
+            pending is None
+            or pending.profile_id != profile_id
+            or pending.payload.get("device_id") != current_device
+            or (arguments is not None and arguments != pending.payload.get("arguments"))
+        ):
+            self.runtime.state.pop("pending_confirmation_id", None)
+            return ToolResult(
+                status=ToolStatus.CONFLICT,
+                message_da="Bekræftelsen er udløbet eller hører til en anden enhed.",
+            )
+        resolved = self.runtime.storage.confirmations.resolve(
+            pending.id, accepted=accepted
+        )
+        self.runtime.state.pop("pending_confirmation_id", None)
+        if resolved is None:
+            return ToolResult(
+                status=ToolStatus.CONFLICT,
+                message_da="Bekræftelsen er udløbet eller allerede brugt.",
+            )
+        if not accepted:
+            return ToolResult(
+                status=ToolStatus.OK, message_da="Handlingen er annulleret."
+            )
+        stored_arguments = pending.payload.get("arguments")
+        if not isinstance(stored_arguments, dict):
+            return ToolResult(
+                status=ToolStatus.INVALID_REQUEST,
+                message_da="Bekræftelsen var ugyldig.",
+            )
+        self.runtime.state["_resume_confirmation"] = True
+        try:
+            return self.runtime.registry.invoke(
+                pending.action,
+                t.cast(dict[str, object], stored_arguments),
+                ToolContext(
+                    state=self.runtime.state,
+                    operation_id=pending.operation_id,
+                    device_id=t.cast(str, current_device),
+                ),
+            )
+        finally:
+            self.runtime.state.pop("_resume_confirmation", None)
 
 
 @dataclass
@@ -103,7 +233,7 @@ def build_integration_runtime(
     hosts, OAuth scopes, and credentials remain constants or environment/keyring data.
     """
     storage = _build_storage(cfg)
-    credentials = _build_credentials(cfg)
+    credentials = _build_credentials(cfg, storage)
     _, profile_aliases, default_profile = _ensure_profiles(cfg, storage)
     accounts = _load_accounts(storage, credentials)
     integrations = _mapping(_value(cfg, "integrations", {}))
@@ -121,9 +251,24 @@ def build_integration_runtime(
         _mapping(_value(cfg, "shopping_list_aliases", {})),
     )
 
+    google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "disabled-client")
+    google_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+    google_auth = GoogleCalendarAuthHandler(
+        credential_store=credentials,
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+    )
     google = GoogleCalendarProvider(
         credential_store=credentials,
-        client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "disabled-client"),
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+        auth_handler=google_auth,
+    )
+    spotify_client_id = os.environ.get("SPOTIFY_CLIENT_ID")
+    spotify_auth = (
+        SpotifyAuthHandler(client_id=spotify_client_id, credential_store=credentials)
+        if spotify_client_id
+        else None
     )
     spotify = SpotifyProvider(
         credential_store=credentials,
@@ -132,6 +277,7 @@ def build_integration_runtime(
         },
         profile_aliases=profile_aliases,
         default_profile=default_profile,
+        auth_handler=spotify_auth,
         device_aliases=t.cast(
             dict[str, str],
             _merge_aliases(
@@ -151,9 +297,15 @@ def build_integration_runtime(
         allow_unofficial=listonic_allowed,
     )
 
+    configured_device_id = _mapping(_value(cfg, "device", {})).get("id", "local-device")
     state: dict[str, object] = {
         "storage": storage,
         "profile_id": _default_profile_id(storage, default_profile),
+        "device_id": (
+            configured_device_id
+            if isinstance(configured_device_id, str) and configured_device_id.strip()
+            else "local-device"
+        ),
         "clock": lambda: dt.datetime.now(dt.UTC),
         "scheduler_poll_seconds": _number(
             _mapping(_value(cfg, "scheduler", {})).get("poll_seconds"), 1.0
@@ -250,7 +402,7 @@ def build_integration_runtime(
         tools=_tools(cfg),
         integration_specs=specs,
         include_integrations=True,
-        include_legacy=False,
+        include_legacy=True,
     )
     runtime = ToolRuntime(registry=registry)
     result = IntegrationRuntime(
@@ -263,85 +415,74 @@ def build_integration_runtime(
         providers=(google, spotify, listonic),
         _stop_event=threading.Event(),
     )
-    _install_confirmation(result, shopping)
+    _install_confirmation(result, shopping, spotify)
     return result
 
 
-def _install_confirmation(runtime: IntegrationRuntime, shopping: ShoppingTools) -> None:
-    """Install local yes/no handling for destructive shopping operations."""
-    original_checker = shopping.confirmation_checker
+def _install_confirmation(
+    runtime: IntegrationRuntime,
+    shopping: ShoppingTools,
+    spotify: SpotifyProvider | None = None,
+) -> None:
+    """Install one persisted, device-bound confirmation manager."""
+    manager = ConfirmationManager(runtime, expiry=dt.timedelta(minutes=2))
 
     def checker(context: ToolContext, resolved: dict[str, object]) -> bool:
-        if context.state.get("confirmed") is True:
-            return True
         arguments = context.state.get("_confirmation_arguments")
-        profile_id = context.state.get("profile_id")
-        if not isinstance(profile_id, str) or not isinstance(arguments, dict):
-            return bool(original_checker and original_checker(context, resolved))
-        pending = runtime.storage.confirmations.create(
-            profile_id=profile_id,
-            action="remove_shopping_item",
-            payload={"arguments": arguments, "summary": resolved},
-            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=2),
-            operation_id=context.operation_id,
-        )
-        context.state["pending_confirmation_id"] = pending.id
-        return False
-
-    shopping.confirmation_checker = checker
-    remove_handler = shopping.remove_shopping_item
-
-    def resolve_confirmation(accepted: bool) -> ToolResult:
-        profile_id = runtime.state.get("profile_id")
-        pending_id = runtime.state.get("pending_confirmation_id")
-        if not isinstance(profile_id, str) or not isinstance(pending_id, str):
-            return ToolResult(
-                status=ToolStatus.NOT_FOUND,
-                message_da="Der er ingen afventende bekræftelse.",
-            )
-        pending = runtime.storage.confirmations.get(pending_id)
-        if pending is None or pending.profile_id != profile_id:
-            return ToolResult(
-                status=ToolStatus.NOT_FOUND, message_da="Bekræftelsen er udløbet."
-            )
-        resolved = runtime.storage.confirmations.resolve(pending.id, accepted=accepted)
-        runtime.state.pop("pending_confirmation_id", None)
-        if resolved is None:
-            return ToolResult(
-                status=ToolStatus.CONFLICT, message_da="Bekræftelsen er udløbet."
-            )
-        if not accepted:
-            return ToolResult(
-                status=ToolStatus.OK, message_da="Handlingen er annulleret."
-            )
-        arguments = pending.payload.get("arguments")
+        if context.state.get("_resume_confirmation") is True:
+            return True
         if not isinstance(arguments, dict):
-            return ToolResult(
-                status=ToolStatus.INVALID_REQUEST,
-                message_da="Bekræftelsen var ugyldig.",
-            )
-        runtime.state["confirmed"] = True
-        try:
-            return remove_handler(
-                ToolContext(state=runtime.state, operation_id=pending.operation_id),
-                arguments,
-            )
-        finally:
-            runtime.state.pop("confirmed", None)
+            return False
+        return manager.request(
+            context,
+            action="remove_shopping_item",
+            arguments=arguments,
+            resolved=resolved,
+        )
 
-    runtime.state["confirmation_handler"] = resolve_confirmation
+    del spotify
+    shopping.confirmation_checker = checker
+    runtime.state["confirmation_manager"] = manager
+    runtime.state["confirmation_handler"] = manager.resolve
 
 
 def _build_storage(cfg: DictConfig) -> Storage:
-    value = _mapping(_value(cfg, "storage", {})).get("database_path", ":memory:")
-    return Storage(pathlib.Path(str(value)))
+    value = (
+        os.environ.get("VOICEBOT_DATABASE_PATH")
+        or os.environ.get("VOICEBOT_DB_PATH")
+        or _mapping(_value(cfg, "storage", {})).get("database_path", ":memory:")
+    )
+    path = pathlib.Path(str(value))
+    if not path.is_absolute() and str(path) != ":memory:":
+        try:
+            from hydra.utils import get_original_cwd
+
+            path = pathlib.Path(get_original_cwd()) / path
+        except ImportError, RuntimeError:
+            path = pathlib.Path.cwd() / path
+    return Storage(path)
 
 
-def _build_credentials(cfg: DictConfig) -> CredentialStore:
+def _build_credentials(
+    cfg: DictConfig, storage: Storage | None = None
+) -> CredentialStore:
     value = _mapping(_value(cfg, "storage", {})).get("credential_backend", "keyring")
+    persist_status: c.Callable[[ProviderAccount, ConnectionStatus], None] | None = None
+    if storage is not None:
+
+        def save_status(account: ProviderAccount, status: ConnectionStatus) -> None:
+            """Mirror keyring refresh failures into durable provider metadata."""
+            for record in storage.providers.list_accounts():
+                if record.credential_ref == account.credential_ref:
+                    storage.providers.set_account_status(record.id, status.value)
+                    break
+
+        persist_status = save_status
     if str(value).casefold() in {"memory", "memory_only", "in-memory"}:
-        return CredentialStore(backend=MemoryCredentialBackend())
-    return CredentialStore()
+        return CredentialStore(
+            backend=MemoryCredentialBackend(), status_callback=persist_status
+        )
+    return CredentialStore(status_callback=persist_status)
 
 
 def _ensure_profiles(
@@ -393,6 +534,14 @@ def _load_accounts(
             credential_ref=record.credential_ref,
             scopes=record.scopes,
         )
+        if record.status != "connected":
+            credentials.mark_disconnected(record.credential_ref)
+            account = t.cast(
+                ProviderAccount,
+                dataclasses.replace(
+                    account, status=credentials.account_status(record.credential_ref)
+                ),
+            )
         result.setdefault(record.provider, {})[profile] = account
     return result
 

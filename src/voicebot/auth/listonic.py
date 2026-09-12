@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections.abc as c
 import dataclasses
 import datetime as dt
+import json
 import typing as t
 
 from ..providers.listonic import (
@@ -104,6 +105,8 @@ class ListonicAuthHandler:
             if self.token_sink is not None:
                 self.token_sink(account, imported)
             return account
+        except CredentialError:
+            raise
         except Exception:
             raise CredentialError("Listonic onboarding failed") from None
         finally:
@@ -173,11 +176,14 @@ def _import_session_tokens(value: object, *, now: dt.datetime) -> ListonicSessio
     if not isinstance(value, c.Mapping):
         raise ValueError("browser token export is invalid")
 
-    access = value.get("access_token")
-    refresh = value.get("refresh_token")
-    expiry = value.get("expires_at")
+    token_value = _find_token_mapping(value)
+    if token_value is None:
+        raise ValueError("browser token export has no token state")
+    access = token_value.get("access_token")
+    refresh = token_value.get("refresh_token")
+    expiry = token_value.get("expires_at")
     if expiry is None:
-        expires_in = value.get("expires_in")
+        expires_in = token_value.get("expires_in")
         if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool):
             expiry = now + dt.timedelta(seconds=expires_in)
     if not isinstance(access, str) or not access:
@@ -190,6 +196,43 @@ def _import_session_tokens(value: object, *, now: dt.datetime) -> ListonicSessio
     return ListonicSessionToken(
         access_token=access, refresh_token=refresh, expires_at=parsed_expiry
     )
+
+
+def _find_token_mapping(value: c.Mapping[str, object]) -> c.Mapping[str, object] | None:
+    """Find a token object in browser storage without copying unrelated state."""
+    normalised = {
+        str(key).casefold().replace("-", "_"): item for key, item in value.items()
+    }
+    access = normalised.get("access_token", normalised.get("accesstoken"))
+    refresh = normalised.get("refresh_token", normalised.get("refreshtoken"))
+    if isinstance(access, str) and isinstance(refresh, str):
+        return {
+            "access_token": access,
+            "refresh_token": refresh,
+            "expires_at": normalised.get("expires_at", normalised.get("expiresat")),
+            "expires_in": normalised.get("expires_in", normalised.get("expiresin")),
+        }
+    for item in value.values():
+        if isinstance(item, c.Mapping):
+            found = _find_token_mapping(item)
+            if found is not None:
+                return found
+        if isinstance(item, list):
+            for nested in item:
+                if isinstance(nested, c.Mapping):
+                    found = _find_token_mapping(nested)
+                    if found is not None:
+                        return found
+        if isinstance(item, str):
+            try:
+                decoded = json.loads(item)
+            except TypeError, ValueError:
+                continue
+            if isinstance(decoded, c.Mapping):
+                found = _find_token_mapping(decoded)
+                if found is not None:
+                    return found
+    return None
 
 
 def _parse_expiry(value: object, *, now: dt.datetime) -> dt.datetime:

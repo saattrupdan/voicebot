@@ -1,8 +1,8 @@
 """Safe local onboarding entry point for provider integrations.
 
-Provider implementations register handlers here as they are delivered.  Until then,
-the commands are deliberately useful but harmless: they report that a provider is not
-configured rather than prompting for or accepting credentials.
+The commands route OAuth and isolated-browser onboarding through provider handlers.
+Providers without local OAuth client configuration remain harmlessly unavailable rather
+than prompting for or accepting credentials on the command line.
 """
 
 from __future__ import annotations
@@ -10,10 +10,18 @@ from __future__ import annotations
 import argparse
 import collections.abc as c
 import dataclasses
+import json
 import os
+import pathlib
+import shutil
+import subprocess
 import sys
+import tempfile
+
+from omegaconf import OmegaConf
 
 from voicebot.auth import (
+    CredentialError,
     CredentialStore,
     ProviderAccount,
     ProviderAuthHandler,
@@ -26,8 +34,98 @@ from voicebot.auth.listonic import (
     ListonicAuthHandler,
 )
 from voicebot.auth.spotify import SpotifyAuthHandler
+from voicebot.storage import Storage
 
 DEFAULT_PROVIDERS = ("google-calendar", "spotify", "listonic")
+
+
+class BrowserHelperUnavailable(CredentialError):
+    """Raised when disposable Listonic browser support is not installed."""
+
+
+class _IsolatedBrowserSession:
+    """Small, secret-free adapter around an operator-installed browser helper."""
+
+    def __init__(self, helper: str) -> None:
+        self.helper = helper
+        self.profile = pathlib.Path(tempfile.mkdtemp(prefix="voicebot-listonic-"))
+
+    def open_login(self, url: str) -> None:
+        subprocess.run(
+            [self.helper, "--profile", str(self.profile), "open", url],
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # The prompt is only a synchronization point; the password stays in the
+        # browser and is never read by this process.
+        try:
+            input("Complete Listonic login in the isolated browser, then press Enter: ")
+        except EOFError as error:
+            raise BrowserHelperUnavailable(
+                "Listonic login needs an interactive terminal"
+            ) from error
+
+    def export_tokens(self) -> object:
+        completed = subprocess.run(
+            [
+                self.helper,
+                "--profile",
+                str(self.profile),
+                "eval",
+                "JSON.stringify({localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))})",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        exported: object = json.loads(completed.stdout)
+        try:
+            cookies = subprocess.run(
+                [
+                    self.helper,
+                    "--profile",
+                    str(self.profile),
+                    "cookies",
+                    "get",
+                    "--json",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            cookie_state: object = json.loads(cookies.stdout)
+        except OSError, subprocess.SubprocessError, ValueError:
+            cookie_state = {}
+        if isinstance(exported, dict) and isinstance(cookie_state, dict):
+            return {**exported, "cookies": cookie_state}
+        return exported
+
+    def destroy(self) -> None:
+        try:
+            subprocess.run(
+                [self.helper, "--profile", str(self.profile), "close"],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        finally:
+            shutil.rmtree(self.profile, ignore_errors=True)
+
+
+def _isolated_browser_factory() -> IsolatedBrowserSession:
+    configured = os.environ.get("LISTONIC_BROWSER_HELPER")
+    helper = shutil.which(configured) if configured else shutil.which("agent-browser")
+    if configured and helper is None and pathlib.Path(configured).is_file():
+        helper = configured
+    if not helper:
+        raise BrowserHelperUnavailable(
+            "isolated Listonic browser helper is unavailable; install agent-browser "
+            "or set LISTONIC_BROWSER_HELPER"
+        )
+    return _IsolatedBrowserSession(helper)
 
 
 class ProviderNotConfiguredError(RuntimeError):
@@ -67,6 +165,141 @@ class NotConfiguredProvider:
     def disconnect(self, profile: str) -> None:
         """Refuse disconnect when there is no provider account registry."""
         raise ProviderNotConfiguredError(self.provider)
+
+
+class _PersistedAuthHandler:
+    """Persist provider metadata while leaving secrets in CredentialStore."""
+
+    def __init__(
+        self,
+        provider: str,
+        handler: ProviderAuthHandler,
+        *,
+        storage: Storage,
+        credentials: CredentialStore,
+    ) -> None:
+        self.provider = provider
+        self.handler = handler
+        self.storage = storage
+        self.credentials = credentials
+        self._rehydrate()
+
+    def login(self, profile: str) -> ProviderAccount | None:
+        account = self.handler.login(profile)
+        if account is None:
+            return None
+        self._ensure_profile(profile)
+        self._persist(account)
+        return account
+
+    def status(self, profile: str | None = None) -> object:
+        records = self.storage.providers.list_accounts()
+        relevant = [record for record in records if record.provider == self.provider]
+        profiles = {item.id: item.name for item in self.storage.profiles.list()}
+        if profile is not None:
+            record = next(
+                (item for item in relevant if profiles.get(item.profile_id) == profile),
+                None,
+            )
+            state = "disconnected"
+            if record is not None and record.status == "connected":
+                state = "connected"
+            return IntegrationStatus(_normalise_provider(self.provider), profile, state)
+        return [
+            IntegrationStatus(
+                _normalise_provider(self.provider),
+                profiles.get(record.profile_id),
+                "connected" if record.status == "connected" else "disconnected",
+            )
+            for record in relevant
+            if profiles.get(record.profile_id) is not None
+        ]
+
+    def disconnect(self, profile: str) -> None:
+        profiles = {item.id: item.name for item in self.storage.profiles.list()}
+        record = next(
+            (
+                item
+                for item in self.storage.providers.list_accounts()
+                if item.provider == self.provider
+                and profiles.get(item.profile_id) == profile
+            ),
+            None,
+        )
+        if record is None:
+            return
+        account = self.credentials.connect(
+            self.provider,
+            profile,
+            credential_ref=record.credential_ref,
+            scopes=record.scopes,
+        )
+        if record.status != "connected":
+            self.credentials.mark_disconnected(account.credential_ref)
+        try:
+            disconnect = getattr(self.handler, "disconnect", None)
+            if callable(disconnect) and profile in getattr(
+                self.handler, "_accounts", {}
+            ):
+                disconnect(profile)
+            else:
+                revoke = getattr(self.handler, "revoke_token", None)
+                if revoke is None:
+                    revoke = getattr(self.handler, "revoke", None)
+                self.credentials.disconnect(account, revoke=revoke)
+        finally:
+            self.storage.providers.set_account_status(record.id, "disconnected")
+
+    def _ensure_profile(self, name: str) -> str:
+        profile = next(
+            (item for item in self.storage.profiles.list() if item.name == name), None
+        )
+        if profile is None:
+            profile = self.storage.profiles.create(name)
+        if not self.storage.profiles.find_aliases(name):
+            self.storage.profiles.add_alias(profile.id, name)
+        return profile.id
+
+    def _persist(self, account: ProviderAccount) -> None:
+        profile_id = self._ensure_profile(account.profile)
+        self.storage.providers.upsert_account(
+            profile_id,
+            account.provider,
+            account.credential_ref,
+            scopes=account.scopes,
+            status=account.status.value,
+        )
+
+    def _rehydrate(self) -> None:
+        profiles = {item.id: item.name for item in self.storage.profiles.list()}
+        for record in self.storage.providers.list_accounts():
+            if record.provider != self.provider or record.profile_id not in profiles:
+                continue
+            account = self.credentials.connect(
+                record.provider,
+                profiles[record.profile_id],
+                credential_ref=record.credential_ref,
+                scopes=record.scopes,
+            )
+            if record.status != "connected":
+                self.credentials.mark_disconnected(record.credential_ref)
+            accounts = getattr(self.handler, "_accounts", None)
+            if isinstance(accounts, dict):
+                accounts[account.profile] = account
+
+
+def _persisted_handler(
+    provider: str,
+    handler: ProviderAuthHandler,
+    *,
+    storage: Storage | None,
+    credentials: CredentialStore,
+) -> ProviderAuthHandler:
+    if storage is None:
+        return handler
+    return _PersistedAuthHandler(
+        provider, handler, storage=storage, credentials=credentials
+    )
 
 
 class ProviderRegistry:
@@ -110,6 +343,7 @@ def register_integration_handlers(
     registry: ProviderRegistry | None = None,
     *,
     credential_store: CredentialStore | None = None,
+    storage: Storage | None = None,
     google_client_id: str | None = None,
     google_client_secret: str | None = None,
     spotify_client_id: str | None = None,
@@ -126,23 +360,39 @@ def register_integration_handlers(
     if google_id:
         active.register(
             "google-calendar",
-            GoogleCalendarAuthHandler(
-                credential_store=store,
-                client_id=google_id,
-                client_secret=google_client_secret
-                or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+            _persisted_handler(
+                "google_calendar",
+                GoogleCalendarAuthHandler(
+                    credential_store=store,
+                    client_id=google_id,
+                    client_secret=google_client_secret
+                    or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+                ),
+                storage=storage,
+                credentials=store,
             ),
         )
     spotify_id = spotify_client_id or os.environ.get("SPOTIFY_CLIENT_ID")
     if spotify_id:
         active.register(
-            "spotify", SpotifyAuthHandler(client_id=spotify_id, credential_store=store)
+            "spotify",
+            _persisted_handler(
+                "spotify",
+                SpotifyAuthHandler(client_id=spotify_id, credential_store=store),
+                storage=storage,
+                credentials=store,
+            ),
         )
     active.register(
         "listonic",
-        ListonicAuthHandler(
-            credential_store=store,
-            browser_factory=listonic_browser_factory or _missing_browser_factory,
+        _persisted_handler(
+            "listonic",
+            ListonicAuthHandler(
+                credential_store=store,
+                browser_factory=listonic_browser_factory or _isolated_browser_factory,
+            ),
+            storage=storage,
+            credentials=store,
         ),
     )
     return active
@@ -170,7 +420,10 @@ def main(
     args = parser.parse_args(argv)
     active_registry = registry or _default_registry
     if registry is None:
-        register_integration_handlers(active_registry)
+        storage = Storage(_database_path())
+        register_integration_handlers(
+            active_registry, credential_store=CredentialStore(), storage=storage
+        )
     write_line = output or _write_line
     provider = getattr(args, "provider", None)
 
@@ -194,6 +447,9 @@ def main(
     except ProviderNotConfiguredError:
         write_line(f"{_normalise_provider(provider)}: not configured")
         return 2
+    except BrowserHelperUnavailable as error:
+        write_line(f"{_normalise_provider(provider)}: {redact_text(str(error))}")
+        return 2
     except Exception:
         # Provider exceptions may echo request bodies or credentials.  The CLI exposes
         # a stable generic error rather than forwarding provider text.
@@ -203,8 +459,11 @@ def main(
 
 
 def _missing_browser_factory() -> IsolatedBrowserSession:
-    """Fail closed when no isolated-browser implementation is installed."""
-    raise RuntimeError("isolated Listonic browser is not installed")
+    """Compatibility alias for callers that explicitly request fail-closed setup."""
+    raise BrowserHelperUnavailable(
+        "isolated Listonic browser helper is unavailable; install agent-browser "
+        "or set LISTONIC_BROWSER_HELPER"
+    )
 
 
 def _status(
@@ -251,6 +510,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _format_status(provider: str, status: object, requested_profile: str | None) -> str:
+    if isinstance(status, list):
+        lines = [
+            _format_status(provider, item, requested_profile)
+            for item in status
+            if isinstance(item, IntegrationStatus)
+        ]
+        return "\n".join(lines) if lines else f"{provider}: disconnected"
+    if isinstance(status, dict):
+        lines = [
+            _format_status(provider, item, requested_profile)
+            for item in status.values()
+        ]
+        return "\n".join(lines) if lines else f"{provider}: disconnected"
     if isinstance(status, IntegrationStatus):
         profile = status.profile or requested_profile
         route = f"/{redact_text(profile)}" if profile else ""
@@ -267,6 +539,28 @@ def _normalise_provider(provider: str) -> str:
 
 def _write_line(line: str) -> None:
     sys.stdout.write(f"{line}\n")
+
+
+def _database_path() -> pathlib.Path:
+    """Return the same database location used by the bot configuration."""
+    configured = os.environ.get("VOICEBOT_DATABASE_PATH") or os.environ.get(
+        "VOICEBOT_DB_PATH"
+    )
+    if configured:
+        return pathlib.Path(configured)
+    config_override = os.environ.get("VOICEBOT_CONFIG")
+    config_path = (
+        pathlib.Path(config_override)
+        if config_override
+        else (pathlib.Path(__file__).resolve().parents[2] / "config" / "config.yaml")
+    )
+    try:
+        config = OmegaConf.load(config_path)
+        configured_path = str(config.storage.database_path)
+    except OSError, AttributeError, TypeError:
+        configured_path = ".local/state/voicebot.sqlite"
+    path = pathlib.Path(configured_path)
+    return path if path.is_absolute() else config_path.parent.parent / path
 
 
 _default_registry = ProviderRegistry()

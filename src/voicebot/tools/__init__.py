@@ -134,6 +134,13 @@ MODEL_TOOL_NAMES = frozenset(
         "add_shopping_items",
         "set_shopping_item_checked",
         "remove_shopping_item",
+        # Historical tools remain model-visible and are intentionally kept in the
+        # same closed registry as the integration tools.
+        "get_weather",
+        "get_news",
+        "search_web",
+        "meow",
+        "lookup",
     }
 )
 

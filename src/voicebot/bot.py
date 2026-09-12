@@ -68,6 +68,8 @@ class VoiceBot:
         )
 
         logger.info("Configuring local integrations...")
+        self._timer_alarm_events: dict[str, threading.Event] = {}
+        self._timer_alarm_lock = threading.Lock()
         self.integration_runtime = build_integration_runtime(
             self.cfg,
             notification_callback=self._deliver_notification,
@@ -127,6 +129,9 @@ class VoiceBot:
                             notification_id
                         ) in self.integration_runtime.dispatcher.active_ids:
                             self.integration_runtime.dispatcher.cancel(notification_id)
+                        with self._timer_alarm_lock:
+                            for event in self._timer_alarm_events.values():
+                                event.set()
 
                     next_speech, next_audio_start = self._record(
                         last_response_time=last_response_time,
@@ -150,6 +155,9 @@ class VoiceBot:
                         last_response_time = dt.datetime.now()
                     break
         finally:
+            with self._timer_alarm_lock:
+                for event in self._timer_alarm_events.values():
+                    event.set()
             self.integration_runtime.stop()
 
     def _deliver_notification(
@@ -170,11 +178,20 @@ class VoiceBot:
         )
 
     def _deliver_timer_alarm(self, timer: object) -> None:
-        """Speak a named timer alarm using the same cancellable synthesiser."""
-        name = getattr(timer, "name", "timer")
-        synthesise_speech(
-            text=f"Timeren {name} er færdig.", synthesiser=self.synthesiser
-        )
+        """Speak a named timer alarm, allowing barge-in to dismiss it."""
+        name = str(getattr(timer, "name", "timer"))
+        event = threading.Event()
+        with self._timer_alarm_lock:
+            self._timer_alarm_events[name] = event
+        try:
+            synthesise_speech(
+                text=f"Timeren {name} er færdig.",
+                synthesiser=self.synthesiser,
+                cancel_event=event,
+            )
+        finally:
+            with self._timer_alarm_lock:
+                self._timer_alarm_events.pop(name, None)
 
     def _record(
         self,
