@@ -148,6 +148,35 @@ def test_events_are_field_filtered_and_private_events_become_busy() -> None:
     assert "Private secret" not in encoded
 
 
+def test_missing_calendar_binding_fails_closed_without_primary_fallback() -> None:
+    """A connected profile cannot silently use Google's ``primary`` calendar."""
+    store = CredentialStore.memory_only()
+    account = store.connect("google_calendar", "dan", refresh_token="refresh")
+    provider = GoogleCalendarProvider(store, client_id="client-id")
+    adapter = CalendarToolAdapter(
+        provider, store, profile_accounts={"dan": account.credential_ref}
+    )
+
+    events = adapter.list_calendar_events(
+        ToolContext(state={}),
+        {
+            "profile_name": "dan",
+            "calendar_name": None,
+            "starts_at": STARTS,
+            "ends_at": ENDS,
+            "query": None,
+            "max_results": 1,
+        },
+    )
+    availability = adapter.get_calendar_availability(
+        ToolContext(state={}),
+        {"profile_names": ["dan"], "starts_at": STARTS, "ends_at": ENDS},
+    )
+
+    assert events.status is ToolStatus.NOT_FOUND
+    assert availability.status is ToolStatus.NOT_FOUND
+
+
 def test_profile_ambiguity_and_cross_profile_binding_fail_closed() -> None:
     """Aliases clarify locally and a binding cannot borrow another profile's account."""
     store = CredentialStore.memory_only()

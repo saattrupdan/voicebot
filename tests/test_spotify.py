@@ -7,7 +7,7 @@ import httpx
 from voicebot.auth.credentials import CredentialStore, ProviderAccount, TokenSet
 from voicebot.auth.spotify import SpotifyAuthHandler, SpotifyCallback
 from voicebot.providers.spotify import SpotifyProvider
-from voicebot.tool_runtime import ToolContext, ToolStatus
+from voicebot.tool_runtime import ToolContext, ToolStatus, validate_arguments
 from voicebot.tools.spotify import create_spotify_tool_specs
 
 _SCOPES = ("user-read-playback-state", "user-modify-playback-state")
@@ -104,9 +104,8 @@ def test_play_binds_search_result_and_hides_ids() -> None:
 
     assert result.status is ToolStatus.OK
     assert "device-private" not in result.to_json()
-    assert requests[-1].content == (
-        b'{"uris":["spotify:track:private"],"device_id":"device-private"}'
-    )
+    assert requests[-1].url.query == b"device_id=device-private"
+    assert requests[-1].content == b'{"uris":["spotify:track:private"]}'
 
 
 def test_ambiguous_devices_and_rate_limit_are_safe() -> None:
@@ -165,6 +164,35 @@ def test_tool_specs_have_no_uri_argument() -> None:
         properties = spec.parameters["properties"]
         assert isinstance(properties, dict)
         assert "uri" not in properties
+
+
+def test_spotify_schemas_reject_malformed_nullable_values() -> None:
+    """Nullable Spotify fields remain strict under the merged validator."""
+    specs = {
+        spec.name: spec
+        for spec in create_spotify_tool_specs(
+            SpotifyProvider(store=CredentialStore.memory_only())
+        )
+    }
+    play = specs["spotify_play"]
+    valid = {
+        "profile_name": None,
+        "query": "Kind of Blue",
+        "media_type": None,
+        "device_name": None,
+    }
+
+    assert validate_arguments(schema=play.parameters, arguments=valid) is None
+    for field, value in (
+        ("profile_name", 42),
+        ("media_type", True),
+        ("media_type", "podcast"),
+        ("device_name", []),
+    ):
+        malformed = {**valid, field: value}
+        assert (
+            validate_arguments(schema=play.parameters, arguments=malformed) is not None
+        )
 
 
 def test_refresh_rotation_and_disconnect_keep_secrets_local() -> None:

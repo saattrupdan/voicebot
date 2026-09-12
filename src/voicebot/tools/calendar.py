@@ -155,10 +155,8 @@ class CalendarToolAdapter:
             grouped: dict[str, list[tuple[str, list[str]]]] = {}
             for profile in profiles:
                 bindings = self._bindings.get(profile, [])
-                # ``primary`` is a provider-side default, not model input. It permits a
-                # connected account to work before local calendar discovery is bound.
                 if not bindings:
-                    bindings = [CalendarBinding(profile, "kalender", "primary")]
+                    return _result(ToolStatus.NOT_FOUND, "Kalenderen blev ikke fundet.")
                 credential_ref = self._credential_ref(
                     profile=profile, binding=bindings[0]
                 )
@@ -232,7 +230,7 @@ class CalendarToolAdapter:
             if len(bindings) == 1:
                 return bindings[0]
             if not bindings:
-                return CalendarBinding(profile, "kalender", "primary")
+                return _result(ToolStatus.NOT_FOUND, "Kalenderen blev ikke fundet.")
             return _result(
                 ToolStatus.NEEDS_CLARIFICATION,
                 "Hvilken kalender mener du?",
