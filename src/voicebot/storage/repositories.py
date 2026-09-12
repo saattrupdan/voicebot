@@ -19,6 +19,7 @@ from .models import (
     Binding,
     Notification,
     Operation,
+    OperationAcquisition,
     PendingConfirmation,
     Profile,
     ProfileAlias,
@@ -65,16 +66,14 @@ class ProfileRepository:
 
     def get(self, profile_id: str) -> Profile | None:
         """Return a profile by ID, or ``None`` when it does not exist."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
+        )
         return _profile(row) if row else None
 
     def list(self) -> b.list[Profile]:
         """Return profiles in stable creation order."""
-        rows = self.database.connection.execute(
-            "SELECT * FROM profiles ORDER BY created_at, id"
-        )
+        rows = self.database.query("SELECT * FROM profiles ORDER BY created_at, id")
         return [_profile(row) for row in rows]
 
     def rename(
@@ -140,14 +139,14 @@ class ProfileRepository:
     def find_aliases(self, alias: str) -> b.list[ProfileAlias]:
         """Return all exact matches for an alias (normally zero or one)."""
         normalised = normalise_alias(alias)
-        rows = self.database.connection.execute(
+        rows = self.database.query(
             "SELECT * FROM profile_aliases WHERE normalised_alias = ?", (normalised,)
         )
         return [_profile_alias(row) for row in rows]
 
     def resolve_alias(self, alias: str) -> b.list[Profile]:
         """Resolve an alias without fuzzy matching."""
-        rows = self.database.connection.execute(
+        rows = self.database.query(
             "SELECT p.* FROM profiles AS p JOIN profile_aliases AS a "
             "ON a.profile_id = p.id WHERE a.normalised_alias = ? "
             "ORDER BY p.created_at, p.id",
@@ -222,20 +221,20 @@ class ProviderRepository:
 
     def get_account(self, *, profile_id: str, provider: str) -> ProviderAccount | None:
         """Return one provider account metadata record."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM provider_accounts WHERE profile_id = ? AND provider = ?",
             (profile_id, provider),
-        ).fetchone()
+        )
         return _provider_account(row) if row else None
 
     def list_accounts(self, profile_id: str | None = None) -> list[ProviderAccount]:
         """List provider metadata, optionally limited to a profile."""
         if profile_id is None:
-            rows = self.database.connection.execute(
+            rows = self.database.query(
                 "SELECT * FROM provider_accounts ORDER BY provider, id"
             )
         else:
-            rows = self.database.connection.execute(
+            rows = self.database.query(
                 "SELECT * FROM provider_accounts WHERE profile_id = ? "
                 "ORDER BY provider, id",
                 (profile_id,),
@@ -254,9 +253,9 @@ class ProviderRepository:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"unknown provider account: {account_id}")
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM provider_accounts WHERE id = ?", (account_id,)
-        ).fetchone()
+        )
         assert row is not None
         return _provider_account(row)
 
@@ -337,10 +336,10 @@ class ProviderRepository:
             clauses.append("normalised_alias = ?")
             parameters.append(normalise_alias(alias))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = self.database.connection.execute(
+        rows = self.database.query(
             f"SELECT *, {id_column} AS provider_id FROM {table}{where} "
             "ORDER BY created_at, id",
-            parameters,
+            tuple(parameters),
         )
         return [_binding(row) for row in rows]
 
@@ -419,9 +418,9 @@ class ReminderRepository:
 
     def get(self, reminder_id: str) -> Reminder | None:
         """Return a reminder by ID."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM reminders WHERE id = ?", (reminder_id,)
-        ).fetchone()
+        )
         return _reminder(row) if row else None
 
     def list(
@@ -437,8 +436,8 @@ class ReminderRepository:
             clauses.append("status = ?")
             parameters.append(status)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = self.database.connection.execute(
-            f"SELECT * FROM reminders{where} ORDER BY due_at, id", parameters
+        rows = self.database.query(
+            f"SELECT * FROM reminders{where} ORDER BY due_at, id", tuple(parameters)
         )
         return [_reminder(row) for row in rows]
 
@@ -558,9 +557,9 @@ class NotificationQueueRepository:
 
     def get(self, notification_id: str) -> Notification | None:
         """Return a queue item by ID."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM notification_queue WHERE id = ?", (notification_id,)
-        ).fetchone()
+        )
         return _notification(row) if row else None
 
     def recover_expired(self, *, now: dt.datetime | None = None) -> int:
@@ -656,7 +655,7 @@ class OperationRepository:
         """Create a repository backed by ``database``."""
         self.database = database
 
-    def start(
+    def acquire(
         self,
         idempotency_key: str,
         operation_type: str,
@@ -666,12 +665,17 @@ class OperationRepository:
         request: Mapping[str, object] | None = None,
         operation_id: str | None = None,
         now: dt.datetime | None = None,
-    ) -> Operation:
-        """Start an operation or return its existing idempotent record."""
+    ) -> OperationAcquisition:
+        """Atomically acquire an operation for at-most-once execution.
+
+        The caller which inserts a new idempotency key owns execution. Every
+        later caller receives the same operation with ``owned`` set to false;
+        it must use the persisted result rather than invoke the provider.
+        """
         current = to_utc(now or utc_now())
         identifier = operation_id or new_id()
         with self.database.transaction(immediate=True) as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "INSERT OR IGNORE INTO operations "
                 "(id, idempotency_key, profile_id, operation_type, provider, status, "
                 "request_json, created_at, updated_at) "
@@ -688,27 +692,52 @@ class OperationRepository:
                 ),
             )
             row = connection.execute(
-                "SELECT id FROM operations WHERE idempotency_key = ?",
-                (idempotency_key,),
+                "SELECT * FROM operations WHERE idempotency_key = ?", (idempotency_key,)
             ).fetchone()
             assert row is not None
-            identifier = str(row["id"])
-        result = self.get(identifier)
-        assert result is not None
-        return result
+            return OperationAcquisition(
+                operation=_operation(row), owned=cursor.rowcount == 1
+            )
+
+    def start(
+        self,
+        idempotency_key: str,
+        operation_type: str,
+        *,
+        profile_id: str | None = None,
+        provider: str | None = None,
+        request: Mapping[str, object] | None = None,
+        operation_id: str | None = None,
+        now: dt.datetime | None = None,
+    ) -> Operation:
+        """Start an operation or return its existing idempotent record.
+
+        Use :meth:`acquire` when the caller needs to know whether it owns
+        execution. This method remains as a compatibility convenience for
+        callers that only need the durable operation record.
+        """
+        return self.acquire(
+            idempotency_key,
+            operation_type,
+            profile_id=profile_id,
+            provider=provider,
+            request=request,
+            operation_id=operation_id,
+            now=now,
+        ).operation
 
     def get(self, operation_id: str) -> Operation | None:
         """Return an operation by ID."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM operations WHERE id = ?", (operation_id,)
-        ).fetchone()
+        )
         return _operation(row) if row else None
 
     def get_by_key(self, idempotency_key: str) -> Operation | None:
         """Return an operation by its idempotency key."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM operations WHERE idempotency_key = ?", (idempotency_key,)
-        ).fetchone()
+        )
         return _operation(row) if row else None
 
     def update(
@@ -720,8 +749,14 @@ class OperationRepository:
         error: str | None = None,
         now: dt.datetime | None = None,
     ) -> Operation:
-        """Set an operation outcome."""
+        """Set an operation outcome.
+
+        ``awaiting_confirmation`` was used by an earlier runtime and is
+        accepted as a read/write compatibility alias for the canonical
+        ``pending_confirmation`` status.
+        """
         current = to_utc(now or utc_now())
+        status = _normalise_operation_status(status)
         with self.database.transaction(immediate=True) as connection:
             cursor = connection.execute(
                 "UPDATE operations SET status = ?, result_json = ?, error = ?, "
@@ -813,9 +848,9 @@ class ConfirmationRepository:
     ) -> PendingConfirmation | None:
         """Return a confirmation, expiring it first when necessary."""
         self.expire(now=now)
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM pending_confirmations WHERE id = ?", (confirmation_id,)
-        ).fetchone()
+        )
         return _confirmation(row) if row else None
 
     def list(
@@ -828,13 +863,13 @@ class ConfirmationRepository:
         """List confirmations, expiring overdue pending records first."""
         self.expire(now=now)
         if profile_id is None:
-            rows = self.database.connection.execute(
+            rows = self.database.query(
                 "SELECT * FROM pending_confirmations WHERE status = ? "
                 "ORDER BY created_at, id",
                 (status,),
             )
         else:
-            rows = self.database.connection.execute(
+            rows = self.database.query(
                 "SELECT * FROM pending_confirmations WHERE profile_id = ? "
                 "AND status = ? ORDER BY created_at, id",
                 (profile_id, status),
@@ -926,9 +961,9 @@ class SchedulerLeaseRepository:
 
     def get(self, name: str) -> SchedulerLease | None:
         """Return a scheduler lease."""
-        row = self.database.connection.execute(
+        row = self.database.query_one(
             "SELECT * FROM scheduler_leases WHERE name = ?", (name,)
-        ).fetchone()
+        )
         return _lease(row) if row else None
 
     def renew(
@@ -1013,7 +1048,7 @@ class AuditRepository:
 
     def list(self, *, limit: int = 100) -> b.list[AuditEvent]:
         """Return the newest audit events first."""
-        rows = self.database.connection.execute(
+        rows = self.database.query(
             "SELECT * FROM audit_events ORDER BY created_at DESC, id DESC LIMIT ?",
             (limit,),
         )
@@ -1045,6 +1080,11 @@ def _redacted_mapping(value: Mapping[str, object]) -> dict[str, object]:
     redacted = redact(value)
     assert isinstance(redacted, dict)
     return redacted
+
+
+def _normalise_operation_status(status: str) -> str:
+    """Return the canonical spelling for an operation status."""
+    return "pending_confirmation" if status == "awaiting_confirmation" else status
 
 
 def redact(value: object, *, key: str = "") -> object:

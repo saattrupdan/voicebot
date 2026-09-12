@@ -103,6 +103,24 @@ class Notification:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class OperationAcquisition:
+    """Result of atomically acquiring an idempotent operation."""
+
+    operation: Operation
+    owned: bool
+
+    @property
+    def is_owner(self) -> bool:
+        """Return whether this caller may execute the provider operation."""
+        return self.owned
+
+    @property
+    def result(self) -> dict[str, object] | None:
+        """Return the persisted result, if the operation already has one."""
+        return self.operation.result
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Operation:
     """An idempotent operation and its provider-independent outcome."""
 
