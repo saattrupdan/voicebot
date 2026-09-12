@@ -29,6 +29,7 @@ dependencies = [
   "webscout==2026.6.4",
   "playsound3>=3.3.2",
   "httpx>=0.28.1",
+  "webrtcvad-wheels==2.0.14",
 ]
 
 [project.urls]
