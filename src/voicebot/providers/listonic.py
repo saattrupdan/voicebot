@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections.abc as c
 import dataclasses
 import datetime as dt
+import json
 import logging
 import threading
 from urllib.parse import quote
@@ -138,7 +139,7 @@ class ListonicSessionToken:
 
 
 class ListonicProvider:
-    """Call only the verified Listonic paths with exact request field casing."""
+    """Call pinned Listonic paths with exact casing and per-operation gates."""
 
     BASE_URL = LISTONIC_BASE_URL
 
@@ -149,6 +150,7 @@ class ListonicProvider:
         accounts: c.Mapping[str, ProviderAccount] | None = None,
         enabled: bool = False,
         allow_unofficial: bool = False,
+        allow_unverified_item_removal: bool = False,
         http_client: httpx.Client | None = None,
         breaker: ListonicCircuitBreaker | None = None,
         refresh: RefreshCallback | None = None,
@@ -164,6 +166,8 @@ class ListonicProvider:
                 Independent Listonic feature flag.
             allow_unofficial (optional):
                 Explicit acknowledgement of the unofficial API.
+            allow_unverified_item_removal (optional):
+                Explicit operator gate for the unverified DELETE operation.
             http_client (optional):
                 A raw ``httpx.Client``; injection is intended for contract tests.
             breaker (optional):
@@ -177,11 +181,14 @@ class ListonicProvider:
         self.accounts = dict(accounts)
         self.enabled = enabled
         self.allow_unofficial = allow_unofficial
+        self.allow_unverified_item_removal = allow_unverified_item_removal
         self.client = http_client or httpx.Client(base_url=LISTONIC_BASE_URL)
         self._owns_client = http_client is None
         self.breaker = breaker or ListonicCircuitBreaker()
         self._refresh_callback = refresh
         self._session_tokens: dict[CredentialReference, ListonicSessionToken] = {}
+        for account in self.accounts.values():
+            self._rehydrate_session_tokens(account)
 
     @property
     def available(self) -> bool:
@@ -215,8 +222,19 @@ class ListonicProvider:
     def register_session_tokens(
         self, account: ProviderAccount, tokens: ListonicSessionToken
     ) -> None:
-        """Cache imported access state without persisting the access token."""
+        """Cache imported access state in the credential backend and this process."""
         self.register_account(account=account)
+        self.credential_store.store_provider_secret(
+            account.credential_ref,
+            "listonic_access",
+            json.dumps(
+                {
+                    "access_token": tokens.access_token,
+                    "expires_at": tokens.expires_at.isoformat(),
+                },
+                separators=(",", ":"),
+            ),
+        )
         self._session_tokens[account.credential_ref] = tokens
 
     def list_lists(self, account: ProviderAccount) -> list[ShoppingList]:
@@ -309,7 +327,11 @@ class ListonicProvider:
             raise
 
     def remove_item(self, account: ProviderAccount, list_id: str, item_id: str) -> None:
-        """Remove one exact item through the pinned item endpoint."""
+        """Remove one item only when the unverified endpoint gate is explicit."""
+        if not self.allow_unverified_item_removal:
+            raise ListonicContractDriftError(
+                "Listonic item removal requires explicit live verification"
+            )
         self._request(
             account=account,
             method="DELETE",
@@ -364,21 +386,54 @@ class ListonicProvider:
             raise ListonicAuthenticationError("Listonic authentication failed")
         cached = self._session_tokens.get(account.credential_ref)
         now = dt.datetime.now(dt.UTC)
-        if cached is not None and cached.expires_at > now + dt.timedelta(seconds=60):
+        if cached is not None and cached.expires_at > now:
             return cached.access_token
+        self._session_tokens.pop(account.credential_ref, None)
+        self.credential_store.delete_provider_secret(
+            account.credential_ref, "listonic_access"
+        )
         if self._refresh_callback is None:
-            self.breaker.trip()
-            raise ListonicAuthenticationError("Listonic refresh is unsupported")
+            self.credential_store.mark_disconnected(account.credential_ref)
+            raise ListonicAuthenticationError(
+                "Listonic session expired; re-onboarding is required"
+            )
         try:
             token = self.credential_store.get_access_token(
                 account.credential_ref, self._refresh_callback
             )
         except CredentialError, PermanentRefreshError:
-            self.breaker.trip()
+            self.credential_store.mark_disconnected(account.credential_ref)
             raise ListonicAuthenticationError(
-                "Listonic authentication failed"
+                "Listonic refresh failed; re-onboarding is required"
             ) from None
         return token
+
+    def _rehydrate_session_tokens(self, account: ProviderAccount) -> None:
+        value = self.credential_store.load_provider_secret(
+            account.credential_ref, "listonic_access"
+        )
+        if value is None:
+            return
+        try:
+            payload = json.loads(value)
+            access_token = payload["access_token"]
+            expires_at = dt.datetime.fromisoformat(payload["expires_at"])
+            if (
+                not isinstance(access_token, str)
+                or not access_token
+                or expires_at.tzinfo is None
+            ):
+                raise ValueError
+        except KeyError, TypeError, ValueError, json.JSONDecodeError:
+            self.credential_store.delete_provider_secret(
+                account.credential_ref, "listonic_access"
+            )
+            return
+        self._session_tokens[account.credential_ref] = ListonicSessionToken(
+            access_token=access_token,
+            refresh_token="",
+            expires_at=expires_at.astimezone(dt.UTC),
+        )
 
     def _raise_response_status(self, response: httpx.Response, expected: int) -> None:
         del expected

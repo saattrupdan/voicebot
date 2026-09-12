@@ -87,18 +87,21 @@ class ShoppingTools:
                 description="Add one or more items.",
                 parameters=_ADD_ITEMS_SCHEMA,
                 handler=self.add_shopping_items,
+                mutates=True,
             ),
             ToolSpec(
                 name="set_shopping_item_checked",
                 description="Mark exactly one shopping item as bought or not bought.",
                 parameters=_SET_CHECKED_SCHEMA,
                 handler=self.set_shopping_item_checked,
+                mutates=True,
             ),
             ToolSpec(
                 name="remove_shopping_item",
                 description="Remove exactly one shopping item after confirmation.",
                 parameters=_REMOVE_ITEM_SCHEMA,
                 handler=self.remove_shopping_item,
+                mutates=True,
             ),
         )
 
@@ -394,7 +397,13 @@ class ShoppingTools:
         if failure is not None:
             return None, None, failure
         assert result.reference is not None
-        return result.reference, labels.get(result.reference, result.reference), None
+        if result.reference not in labels:
+            return (
+                None,
+                None,
+                _result(context, ToolStatus.NOT_FOUND, "Listen blev ikke fundet."),
+            )
+        return result.reference, labels[result.reference], None
 
     def _resolve_item(
         self,

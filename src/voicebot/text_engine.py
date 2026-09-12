@@ -89,12 +89,11 @@ class TextEngine:
             runtime = assembled.registry
             state = assembled.state
         self.runtime = runtime or ToolRuntime(
-            registry=tool_module.build_registry(tools=raw_tools)
+            registry=tool_module.build_registry(tools=raw_tools),
+            mutations_enabled=bool(self.cfg.get("mutations_enabled", True)),
         )
-        # The assembled registry is the source of truth: this also keeps legacy
-        # tools visible when a deployment config predates the integration plan.
-        if runtime is not None or assembled is not None:
-            self.tools = t.cast(list[ChatCompletionToolParam], self.runtime.schemas())
+        # The validated registry is always the source of model-visible contracts.
+        self.tools = t.cast(list[ChatCompletionToolParam], self.runtime.schemas())
         self.state = state if state is not None else {}
         self.integration_runtime = assembled
 

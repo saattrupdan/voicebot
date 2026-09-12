@@ -81,8 +81,8 @@ Examples:
 - “Stop pastatimeren.”
 - “Hvilke timere kører?”
 
-Active timer names must be unique after normalisation. If “pasta” already exists, the
-bot reports the conflict instead of silently replacing it.
+Active timer names must be unique after normalisation. If “pasta” already exists,
+the bot reports the conflict instead of silently replacing it.
 
 Timers remain local and in-memory. They use monotonic deadlines and are intended for
 short durations. Persistent, wall-clock-based requests use reminders instead.
@@ -119,9 +119,9 @@ Suggested routing:
 - A device without a default profile requires a spoken person or calendar name.
 
 The integration returns event title, start and end, all-day state, calendar alias, and
-optionally location. It omits descriptions, attendees, conference links, and attachments
-by default. Private events are spoken as “Optaget” unless explicitly enabled for that
-calendar.
+optionally location. It omits descriptions, attendees, conference links, and
+attachments by default. Private events are spoken as “Optaget” unless explicitly
+enabled for that calendar.
 
 ### Spotify
 
@@ -586,7 +586,9 @@ Observed request fields are inconsistent:
 - Checking an item uses lowercase `checked` and `itemId`.
 
 This casing remains isolated inside the Listonic adapter. Domain models and tool schemas
-use consistent Python naming.
+use consistent Python naming. The item DELETE endpoint remains unverified and is gated
+by `allow_unverified_item_removal: false`; enabling it requires a live check against a
+disposable list and is not an assertion that this plan verified it.
 
 Refresh and revocation behaviour must be verified before unattended rollout. If refresh
 fails or the observed contract changes, the adapter opens a Listonic-only circuit
@@ -600,7 +602,8 @@ SQLite stores local routing metadata, never credentials:
 - `profile_aliases`: normalised spoken aliases.
 - `provider_accounts`: provider, local profile, credential reference, scopes, and state.
 - `calendar_bindings`: calendar alias to provider calendar ID.
-- `spotify_device_aliases`: optional local aliases with short-lived provider resolution.
+- `spotify_device_aliases`: profile-scoped local aliases with short-lived provider
+  resolution.
 - `shopping_list_bindings`: list alias to Listonic list ID.
 
 Resolution algorithm:
@@ -653,12 +656,12 @@ The scheduler:
 
 A crash after playback may repeat a reminder once, but must not lose it silently.
 
-Suggested default missed-reminder policy:
+Current missed-reminder policy:
 
 - Deliver reminders up to 15 minutes late after downtime.
 - Mark older reminders as missed.
-- Mention missed reminders on the next user interaction rather than speaking them
-  unexpectedly at startup.
+- Keep missed reminders available through `list_reminders`; they are not automatically
+  mentioned on the next interaction.
 
 ## Cancellation and barge-in
 
@@ -673,15 +676,16 @@ Every provider adapter receives the active turn's cancellation event.
 - If speech is interrupted after a committed operation, include the result in the next
   turn's context.
 
-Due reminders and completed timers have separate alarm cancellation state. “Stop” while
-an alarm is sounding silences that alarm. Outside alarm playback, the current silent
-end-of-conversation behaviour remains unchanged.
+Due reminders and completed timers have separate alarm cancellation state. “Stop”
+while an alarm is sounding silences that alarm. Outside alarm playback, the current
+silent end-of-conversation behaviour remains unchanged.
 
 ## Configuration
 
 Configuration contains aliases and feature flags but no secrets:
 
 ```yaml
+mutations_enabled: true
 locale: da-DK
 timezone: Europe/Copenhagen
 
@@ -705,11 +709,15 @@ integrations:
     spotify:
         enabled: false
         default_profile: dan
-        device_aliases: {}
+        device_aliases:
+            dan: {}
     listonic:
         enabled: false
         allow_unofficial: false
-        list_aliases: {}
+        allow_unverified_item_removal: false
+        list_aliases:
+            dan: {}
+        default_lists: {}
 
 scheduler:
     poll_seconds: 1
@@ -877,8 +885,9 @@ of truth for local routing). The setup CLI and bot resolve the same SQLite path 
 `VOICEBOT_DATABASE_PATH` environment override is available for non-Hydra smoke runs),
 and both use the OS keyring credential backend:
 
-- Login persists profiles, provider-account metadata, aliases, scopes, status, and opaque
-  credential references. A new process rehydrates that metadata before serving tools.
+- Login persists profiles, provider-account metadata, aliases, scopes, status, and
+  opaque credential references. A new process rehydrates that metadata before serving
+  tools.
 - Tool calls use their provider call ID as a stable idempotency key. A completed result
   is reused; an uncertain started operation is never replayed automatically.
 - Destructive Listonic removal and Spotify volume above 80 percent use a two-minute,
@@ -894,7 +903,8 @@ and both use the OS keyring credential backend:
 - [x] `Europe/Copenhagen` is the default timezone.
 - [x] Cooking timers are non-persistent and limited to 24 hours.
 - [x] Reminders are delivered up to 15 minutes late after downtime.
-- [x] Older reminders are marked missed and reported on a later interaction.
+- [x] Older reminders are marked missed and remain queryable; automatic next-turn
+      reporting is not implemented.
 - [x] One default profile is used per physical voicebot installation.
 - [x] Other people's calendars require an explicit profile name.
 - [x] Each profile may have its own least-privilege Google account.
@@ -906,11 +916,11 @@ and both use the OS keyring credential backend:
 - [x] List creation, sharing, and whole-list deletion remain unavailable.
 - [x] Removing an individual Listonic item requires local confirmation.
 - [x] Listonic's unofficial API requires explicit operator acknowledgement.
-- [x] Headless deployments use the OS keyring when available; encrypted-file credential
-      storage is not silently enabled. Disposable tests may explicitly select memory-only
-      credentials.
-- [x] Existing `get_weather`, `get_news`, `search_web`, and `meow` tools remain registered
-      with strict schemas alongside the integration tools.
+- [x] Headless deployments use the OS keyring when available; encrypted-file
+      credential storage is not silently enabled. Disposable tests may explicitly
+      select memory-only credentials.
+- [x] Existing `get_weather`, `get_news`, `search_web`, and `meow` tools remain
+      registered with strict schemas alongside the integration tools.
 
 ## Definition of done
 

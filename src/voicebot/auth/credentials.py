@@ -1,7 +1,8 @@
 """Credential storage and token lifecycle primitives.
 
-Only refresh credentials are persisted by this module.  Access tokens and provider
-account metadata are deliberately process-local; the storage layer can persist the
+Provider secrets are persisted only through the configured credential backend. Access
+state is process-local by default; integrations which cannot refresh may store an
+explicitly named, expiring access-state secret. The storage layer persists only the
 opaque reference returned by :meth:`CredentialStore.connect`.
 """
 
@@ -314,6 +315,24 @@ class CredentialStore:
         self._backend.delete(credential_ref)
         self.mark_disconnected(credential_ref)
 
+    def store_provider_secret(
+        self, credential_ref: CredentialReference, name: str, value: str
+    ) -> None:
+        """Store a named provider secret separately from its refresh credential."""
+        self._backend.replace(_secret_reference(credential_ref, name), value)
+
+    def load_provider_secret(
+        self, credential_ref: CredentialReference, name: str
+    ) -> str | None:
+        """Load a named provider secret from the credential backend."""
+        return self._backend.get(_secret_reference(credential_ref, name))
+
+    def delete_provider_secret(
+        self, credential_ref: CredentialReference, name: str
+    ) -> None:
+        """Delete a named provider secret from the credential backend."""
+        self._backend.delete(_secret_reference(credential_ref, name))
+
     def get_access_token(
         self,
         credential_ref: CredentialReference,
@@ -519,6 +538,12 @@ def redact_mapping(mapping: c.Mapping[str, object]) -> dict[str, object]:
         return value
 
     return t.cast(dict[str, object], clean(dict(mapping)))
+
+
+def _secret_reference(credential_ref: CredentialReference, name: str) -> str:
+    if not re.fullmatch(r"[a-z0-9_]{1,40}", name):
+        raise ValueError("provider secret name is invalid")
+    return f"{credential_ref}:{name}"
 
 
 def new_credential_reference() -> CredentialReference:

@@ -36,6 +36,7 @@ class SpotifyToolFactory:
                                 "playlist",
                                 "show",
                                 "episode",
+                                None,
                             ],
                         },
                         "device_name": _NULL_STRING,
@@ -43,6 +44,7 @@ class SpotifyToolFactory:
                     "required": ["profile_name", "query", "media_type", "device_name"],
                 },
                 handler=self.play,
+                mutates=True,
             ),
             ToolSpec(
                 name="spotify_control",
@@ -63,6 +65,7 @@ class SpotifyToolFactory:
                     "required": ["profile_name", "action", "device_name"],
                 },
                 handler=self.control,
+                mutates=True,
             ),
             ToolSpec(
                 name="spotify_set_volume",
@@ -82,6 +85,7 @@ class SpotifyToolFactory:
                     "required": ["profile_name", "volume_percent", "device_name"],
                 },
                 handler=self.set_volume,
+                mutates=True,
             ),
             ToolSpec(
                 name="spotify_now_playing",

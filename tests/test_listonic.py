@@ -3,20 +3,24 @@
 import collections.abc as c
 import datetime as dt
 import json
+import pathlib
 import threading
 
 import httpx
 import pytest
 
-from voicebot.auth import CredentialError, CredentialStore
-from voicebot.auth.listonic import ListonicAuthHandler
+from scripts.integrations import _PersistedAuthHandler
+from voicebot.auth import CredentialError, CredentialStore, MemoryCredentialBackend
+from voicebot.auth.listonic import IsolatedBrowserSession, ListonicAuthHandler
 from voicebot.providers.listonic import (
     LISTONIC_BASE_URL,
+    ListonicAuthenticationError,
     ListonicCircuitBreaker,
     ListonicContractDriftError,
     ListonicProvider,
     ListonicSessionToken,
 )
+from voicebot.storage import Storage
 from voicebot.tool_runtime import ToolContext, ToolStatus
 from voicebot.tools.shopping import ShoppingTools
 
@@ -31,6 +35,7 @@ def _provider(handler: c.Callable[[httpx.Request], httpx.Response]) -> ListonicP
         accounts={"household": account},
         enabled=True,
         allow_unofficial=True,
+        allow_unverified_item_removal=True,
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     provider.register_session_tokens(
@@ -169,6 +174,183 @@ def test_ambiguous_items_and_cancelled_mutation_do_not_call_mutation_endpoint() 
     )
     assert result.status is ToolStatus.CANCELLED
     assert not any(request.method == "PATCH" for request in calls)
+
+
+def test_list_requires_explicit_default_and_removal_gate() -> None:
+    """Never select the first list or expose unverified removal by default."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(
+            200, json={"lists": [{"id": "list-1", "name": "Groceries"}]}
+        )
+
+    store = CredentialStore.memory_only()
+    account = store.connect("listonic", "household", refresh_token="refresh-canary")
+    provider = ListonicProvider(
+        store,
+        accounts={"household": account},
+        enabled=True,
+        allow_unofficial=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    provider.register_session_tokens(
+        account,
+        ListonicSessionToken(
+            "access-canary", "refresh-canary", NOW + dt.timedelta(hours=1)
+        ),
+    )
+    tools = ShoppingTools(provider, default_profile="household")
+    result = tools.get_shopping_list(
+        ToolContext({}),
+        {"profile_name": None, "list_name": None, "include_checked": False},
+    )
+    assert result.status is ToolStatus.NOT_FOUND
+    with pytest.raises(ListonicContractDriftError, match="verification"):
+        provider.remove_item(account, "list-1", "item-1")
+    assert calls == ["GET"]
+
+
+def test_access_state_rehydrates_and_expires_without_opening_circuit() -> None:
+    """Persist access only in credentials and fail closed at its actual expiry."""
+    backend = MemoryCredentialBackend()
+    first = CredentialStore(backend=backend)
+    account = first.connect("listonic", "household", refresh_token="refresh-canary")
+    first.store_provider_secret(
+        account.credential_ref,
+        "listonic_access",
+        json.dumps(
+            {
+                "access_token": "access-canary",
+                "expires_at": (
+                    dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+                ).isoformat(),
+            }
+        ),
+    )
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"lists": []})
+
+    second = CredentialStore(backend=backend)
+    reconstructed = second.connect(
+        "listonic", "household", credential_ref=account.credential_ref
+    )
+    provider = ListonicProvider(
+        second,
+        accounts={"household": reconstructed},
+        enabled=True,
+        allow_unofficial=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert provider.list_lists(reconstructed) == []
+    assert seen == ["Bearer access-canary"]
+    assert not provider.circuit_open
+
+    second.store_provider_secret(
+        account.credential_ref,
+        "listonic_access",
+        json.dumps(
+            {
+                "access_token": "expired-canary",
+                "expires_at": (
+                    dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+                ).isoformat(),
+            }
+        ),
+    )
+    expired_store = CredentialStore(backend=backend)
+    expired_account = expired_store.connect(
+        "listonic", "household", credential_ref=account.credential_ref
+    )
+    expired = ListonicProvider(
+        expired_store,
+        accounts={"household": expired_account},
+        enabled=True,
+        allow_unofficial=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ListonicAuthenticationError, match="re-onboarding"):
+        expired.list_lists(expired_account)
+    assert not expired.circuit_open
+    assert expired_store.load_refresh_token(account.credential_ref) == "refresh-canary"
+    assert (
+        expired_store.load_provider_secret(account.credential_ref, "listonic_access")
+        is None
+    )
+
+
+def test_listonic_login_status_and_disconnect_survive_reconstruction(
+    tmp_path: pathlib.Path,
+) -> None:
+    """CLI-equivalent services share metadata and credential-only access state."""
+
+    class Browser:
+        def open_login(self, url: str) -> None:
+            assert url.endswith("/login")
+
+        def export_tokens(self) -> object:
+            return {
+                "access_token": "access-canary",
+                "refresh_token": "refresh-canary",
+                "expires_at": (NOW + dt.timedelta(hours=1)).isoformat(),
+            }
+
+        def destroy(self) -> None:
+            return None
+
+    def browser_factory() -> IsolatedBrowserSession:
+        return Browser()
+
+    backend = MemoryCredentialBackend()
+    path = tmp_path / "state.sqlite"
+    storage = Storage(path)
+    first_store = CredentialStore(backend=backend)
+    first = _PersistedAuthHandler(
+        "listonic",
+        ListonicAuthHandler(first_store, browser_factory, clock=lambda: NOW),
+        storage=storage,
+        credentials=first_store,
+    )
+    account = first.login("household")
+    assert account is not None
+    storage.close()
+
+    reconstructed_storage = Storage(path)
+    reconstructed_store = CredentialStore(backend=backend)
+    reconstructed = _PersistedAuthHandler(
+        "listonic",
+        ListonicAuthHandler(reconstructed_store, browser_factory, clock=lambda: NOW),
+        storage=reconstructed_storage,
+        credentials=reconstructed_store,
+    )
+    assert getattr(reconstructed.status("household"), "state") == "connected"
+    reconstructed_store.store_provider_secret(
+        account.credential_ref,
+        "listonic_access",
+        json.dumps(
+            {
+                "access_token": "expired-canary",
+                "expires_at": (NOW - dt.timedelta(seconds=1)).isoformat(),
+            }
+        ),
+    )
+    assert (
+        getattr(reconstructed.status("household"), "state") == "re-onboarding required"
+    )
+    reconstructed.disconnect("household")
+    assert getattr(reconstructed.status("household"), "state") == "disconnected"
+    assert reconstructed_store.load_refresh_token(account.credential_ref) is None
+    assert (
+        reconstructed_store.load_provider_secret(
+            account.credential_ref, "listonic_access"
+        )
+        is None
+    )
+    reconstructed_storage.close()
 
 
 def test_browser_onboarding_destroys_session_and_redacts_failure() -> None:

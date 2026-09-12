@@ -44,6 +44,7 @@ def create_reminder_spec(storage: Storage, clock: Clock = utc_now) -> ToolSpec:
         description="Create one persistent reminder.",
         parameters=_create_schema(),
         handler=_create_handler(storage, clock),
+        mutates=True,
     )
 
 
@@ -64,6 +65,7 @@ def cancel_reminder_spec(storage: Storage, clock: Clock = utc_now) -> ToolSpec:
         description="Cancel one reminder by exact name or reference.",
         parameters=_cancel_schema(),
         handler=_cancel_handler(storage, clock),
+        mutates=True,
     )
 
 

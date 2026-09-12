@@ -114,6 +114,21 @@ LEGACY_TOOL_ADAPTERS: dict[str, LegacyToolAdapter] = {
     "lookup": LegacyToolAdapter(function=_lookup),
 }
 
+MUTATION_TOOL_NAMES = frozenset(
+    {
+        "set_timer",
+        "stop_timer",
+        "create_reminder",
+        "cancel_reminder",
+        "spotify_play",
+        "spotify_control",
+        "spotify_set_volume",
+        "add_shopping_items",
+        "set_shopping_item_checked",
+        "remove_shopping_item",
+    }
+)
+
 MODEL_TOOL_NAMES = frozenset(
     {
         "set_timer",
@@ -213,12 +228,14 @@ def build_registry(
         adapter = LEGACY_TOOL_ADAPTERS.get(name)
         handler: ToolHandler = adapter if adapter is not None else _unavailable
         description = tool.get("description", "")
+        canonical_parameters = _LEGACY_SCHEMAS.get(name, parameters)
         specs.append(
             ToolSpec(
                 name=name,
                 description=description if isinstance(description, str) else "",
-                parameters=parameters,
+                parameters=canonical_parameters,
                 handler=handler,
+                mutates=name in MUTATION_TOOL_NAMES,
             )
         )
 
@@ -237,6 +254,7 @@ def build_registry(
                         description="Legacy compatibility tool.",
                         parameters=schema,
                         handler=LEGACY_TOOL_ADAPTERS[name],
+                        mutates=name in MUTATION_TOOL_NAMES,
                     )
                 )
     return ToolRegistry(specs=specs)
