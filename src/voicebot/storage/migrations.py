@@ -188,9 +188,42 @@ MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at)",
         ),
     ),
+    (3, ()),
 )
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
+
+
+_OPERATION_TABLE = """
+CREATE TABLE operations_new (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+    operation_type TEXT NOT NULL,
+    provider TEXT,
+    status TEXT NOT NULL CHECK(status IN
+        ('started', 'pending_confirmation', 'completed', 'failed', 'cancelled')),
+    request_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
+
+def _migrate_operation_status(connection: sqlite3.Connection) -> None:
+    """Rebuild operations so legacy confirmation statuses become canonical."""
+    connection.execute(_OPERATION_TABLE)
+    connection.execute(
+        "INSERT INTO operations_new "
+        "SELECT id, idempotency_key, profile_id, operation_type, provider, "
+        "CASE status WHEN 'awaiting_confirmation' THEN 'pending_confirmation' "
+        "ELSE status END, request_json, result_json, error, created_at, updated_at "
+        "FROM operations"
+    )
+    connection.execute("DROP TABLE operations")
+    connection.execute("ALTER TABLE operations_new RENAME TO operations")
 
 
 def migrate(connection: sqlite3.Connection) -> int:
@@ -210,10 +243,18 @@ def migrate(connection: sqlite3.Connection) -> int:
     for version, statements in MIGRATIONS:
         if version in applied:
             continue
+        disable_foreign_keys = version == 3
+        if disable_foreign_keys:
+            # SQLite cannot change this pragma inside a transaction. The
+            # operations rebuild must therefore disable checks before BEGIN.
+            connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("BEGIN IMMEDIATE")
         try:
-            for statement in statements:
-                connection.execute(statement)
+            if version == 3:
+                _migrate_operation_status(connection)
+            else:
+                for statement in statements:
+                    connection.execute(statement)
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
                 "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -224,5 +265,8 @@ def migrate(connection: sqlite3.Connection) -> int:
         except Exception:
             connection.rollback()
             raise
+        finally:
+            if disable_foreign_keys:
+                connection.execute("PRAGMA foreign_keys = ON")
         applied.add(version)
     return max(applied, default=0)

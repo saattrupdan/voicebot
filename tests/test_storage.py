@@ -9,7 +9,13 @@ import threading
 
 import pytest
 
-from voicebot.storage import CURRENT_SCHEMA_VERSION, Database, Storage, normalise_alias
+from voicebot.storage import (
+    CURRENT_SCHEMA_VERSION,
+    Database,
+    OperationAcquisition,
+    Storage,
+    normalise_alias,
+)
 
 NOW = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)
 
@@ -106,6 +112,138 @@ def test_transactions_are_isolated_and_rollback_across_threads() -> None:
             "SELECT value FROM transaction_probe"
         ).fetchall()
         assert [row[0] for row in rows] == ["committed"]
+
+
+def test_operation_acquisition_has_one_owner() -> None:
+    """Concurrent callers cannot both acquire one idempotency key."""
+    barrier = threading.Barrier(8)
+    acquisitions: list[OperationAcquisition] = []
+    errors: list[BaseException] = []
+
+    with Storage() as storage:
+
+        def acquire() -> None:
+            try:
+                barrier.wait(timeout=5)
+                acquisitions.append(
+                    storage.operations.acquire("same-key", "delete_item")
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=acquire) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert errors == []
+        assert all(not thread.is_alive() for thread in threads)
+        assert sum(item.owned for item in acquisitions) == 1
+        assert len({item.operation.id for item in acquisitions}) == 1
+        assert sum(item.is_owner for item in acquisitions) == 1
+
+
+def test_database_queries_do_not_observe_rolled_back_rows() -> None:
+    """A read waits for an active transaction instead of seeing dirty data."""
+    first_ready = threading.Event()
+    release_first = threading.Event()
+    read_values: list[list[str]] = []
+    errors: list[BaseException] = []
+
+    with Database() as database:
+        database.connection.execute(
+            "CREATE TABLE dirty_read_probe (value TEXT NOT NULL)"
+        )
+
+        def rollback_worker() -> None:
+            try:
+                with database.transaction(immediate=True) as connection:
+                    connection.execute(
+                        "INSERT INTO dirty_read_probe(value) VALUES (?)",
+                        ("uncommitted",),
+                    )
+                    first_ready.set()
+                    assert release_first.wait(timeout=5)
+                    raise RuntimeError("test rollback")
+            except RuntimeError:
+                pass
+            except BaseException as error:
+                errors.append(error)
+
+        def read_worker() -> None:
+            try:
+                assert first_ready.wait(timeout=5)
+                read_values.append(
+                    [
+                        str(row[0])
+                        for row in database.query("SELECT value FROM dirty_read_probe")
+                    ]
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        writer = threading.Thread(target=rollback_worker)
+        reader = threading.Thread(target=read_worker)
+        writer.start()
+        assert first_ready.wait(timeout=5)
+        reader.start()
+        release_first.set()
+        writer.join(timeout=5)
+        reader.join(timeout=5)
+
+        assert errors == []
+        assert not writer.is_alive()
+        assert not reader.is_alive()
+        assert read_values == [[]]
+
+
+def test_legacy_awaiting_confirmation_status_is_migrated(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Old operation rows remain readable after status spelling is corrected."""
+    path = tmp_path / "legacy.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL
+        );
+        INSERT INTO schema_migrations VALUES (1, 'legacy');
+        INSERT INTO schema_migrations VALUES (2, 'legacy');
+        CREATE TABLE profiles (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE operations (
+            id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
+            profile_id TEXT REFERENCES profiles(id), operation_type TEXT NOT NULL,
+            provider TEXT,
+            status TEXT NOT NULL CHECK(status IN
+                ('started', 'awaiting_confirmation', 'completed', 'failed',
+                 'cancelled')),
+            request_json TEXT NOT NULL, result_json TEXT, error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        INSERT INTO operations VALUES
+            ('operation-1', 'request-1', NULL, 'delete_item', NULL,
+             'awaiting_confirmation', '{}', NULL, NULL, '2026-01-01T12:00:00.000Z',
+             '2026-01-01T12:00:00.000Z');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with Storage(path) as storage:
+        operation = storage.operations.get("operation-1")
+        assert operation is not None
+        assert operation.status == "pending_confirmation"
+        assert (
+            storage.operations.update(
+                operation.id, "awaiting_confirmation", now=NOW
+            ).status
+            == "pending_confirmation"
+        )
 
 
 def test_aliases_are_normalised_and_unique(tmp_path: pathlib.Path) -> None:

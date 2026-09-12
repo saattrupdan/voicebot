@@ -33,11 +33,34 @@ class Database:
     @property
     def schema_version(self) -> int:
         """Return the highest successfully applied migration version."""
+        row = self.query_one("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
+        assert row is not None
+        return int(row[0])
+
+    def execute(
+        self, statement: str, parameters: tuple[object, ...] = ()
+    ) -> sqlite3.Cursor:
+        """Execute one statement while holding the database lock.
+
+        The returned cursor is intended for write statements. Reads should use
+        :meth:`query`, which materialises rows before releasing the lock.
+        """
         with self._transaction_lock:
-            row = self.connection.execute(
-                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
-            ).fetchone()
-            return int(row[0])
+            return self.connection.execute(statement, parameters)
+
+    def query(
+        self, statement: str, parameters: tuple[object, ...] = ()
+    ) -> list[sqlite3.Row]:
+        """Execute a read and materialise its rows under the database lock."""
+        with self._transaction_lock:
+            return self.connection.execute(statement, parameters).fetchall()
+
+    def query_one(
+        self, statement: str, parameters: tuple[object, ...] = ()
+    ) -> sqlite3.Row | None:
+        """Execute a read and return its first row under the database lock."""
+        with self._transaction_lock:
+            return self.connection.execute(statement, parameters).fetchone()
 
     def close(self) -> None:
         """Close the underlying connection."""
