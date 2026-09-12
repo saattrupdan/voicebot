@@ -1966,7 +1966,7 @@ requires-dist = [
     { name = "retry-requests", specifier = ">=2.0.0" },
     { name = "sounddevice", specifier = ">=0.5.6" },
     { name = "webrtcvad-wheels", specifier = "==2.0.14" },
-    { name = "webscout", specifier = "==2026.6.4" },
+    { name = "webscout", specifier = "==2026.6.14" },
 ]
 
 [package.metadata.requires-dev]
@@ -2008,7 +2008,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/28/ba/3a8ce2cff3eee72a3
 
 [[package]]
 name = "webscout"
-version = "2026.6.4"
+version = "2026.6.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2029,9 +2029,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/b7/a13ffa0512d884e14c66388926c6dfa75a7cebd13af6fdbbb97731ca9d27/webscout-2026.6.4.tar.gz", hash = "sha256:c5c16c86765c8aac0d09152076acec3310fee76d8e9a9eee298334c3d992ff5d", size = 676269, upload-time = "2026-06-04T04:45:26.949Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/d1/3e30e5670564c34f159de8bbb9e560b62e8409299c8572a23b5b400635c7/webscout-2026.6.14.tar.gz", hash = "sha256:2901f59e04d8dfeb18bd57e2bba30e309ca80bfb41fb6feeff1f986b0183f2d5", size = 722759, upload-time = "2026-06-14T04:48:27.202Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/84/64d48ddc059cb883ba69db4efb372826bbc7c4509d946cf41f2de1218fc2/webscout-2026.6.4-py3-none-any.whl", hash = "sha256:dd9c9a1989af87d9c3dd64aa6d109c67c6bc372b644efb5eeb4a10c36dde4d2c", size = 909861, upload-time = "2026-06-04T04:45:24.905Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/40/3396bc1ea5dc6117101aee514ea334713a241e2f0592ec245a5bab4a279f/webscout-2026.6.14-py3-none-any.whl", hash = "sha256:a3e5f9dc8c5934c97bab206062399ac29835fdf741bd0f788011c0677d555092", size = 967724, upload-time = "2026-06-14T04:48:25.57Z" },
 ]
 
 [[package]]

@@ -26,7 +26,7 @@ dependencies = [
   "requests>=2.34.2",
   "openwakeword @ git+https://github.com/saattrupdan/openWakeWord.git@7e278890973591734c3ac7f4f65110e4a945ab38",
   "chime>=0.8.0",
-  "webscout==2026.6.4",
+  "webscout==2026.6.14",
   "playsound3>=3.3.2",
   "httpx>=0.28.1",
   "webrtcvad-wheels==2.0.14",
@@ -51,6 +51,9 @@ dev = [
   "pyrefly>=1.3.0",
   "nbstripout>=0.9.1",
 ]
+
+[tool.uv]
+no-binary-package = ["webscout"]
 
 [tool.ruff]
 target-version = "py314"
