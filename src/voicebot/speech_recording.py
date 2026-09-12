@@ -347,10 +347,14 @@ def record_speech(
     chunk_seconds = float(cfg.num_seconds_per_chunk)
     chunk_size = int(SAMPLE_RATE * chunk_seconds)
     max_audio_samples = int(float(cfg.max_seconds_audio) * SAMPLE_RATE)
+    post_wake_onset_samples = max(
+        1, math.ceil(float(cfg.max_seconds_silence) * SAMPLE_RATE)
+    )
     pre_roll_chunks = math.ceil(float(cfg.pre_roll_seconds) / chunk_seconds)
     pre_roll: deque[np.ndarray] = deque(maxlen=max(1, pre_roll_chunks))
     frames: list[np.ndarray] = []
     frames_left_to_ignore = 0
+    post_wake_samples = 0
     audio_start: dt.datetime | None = None
     recording = False
     armed_after_wake = False
@@ -395,6 +399,14 @@ def record_speech(
                             break
                         continue
 
+                if armed_after_wake:
+                    post_wake_samples += frame.size
+                    if post_wake_samples >= post_wake_onset_samples:
+                        detector.reset_activity()
+                        wake_word_model.reset()
+                        return np.empty(0, dtype=np.int16), None
+                    continue
+
                 if not recording:
                     wake_word_prediction_dict = wake_word_model.predict(x=frame)
                     assert isinstance(wake_word_prediction_dict, dict)
@@ -409,6 +421,7 @@ def record_speech(
                         detector.reset_activity()
                         pre_roll.clear()
                         armed_after_wake = True
+                        post_wake_samples = 0
                         frames_left_to_ignore = max(
                             1, math.ceil(float(cfg.wake_word_seconds) / chunk_seconds)
                         )
@@ -469,5 +482,7 @@ def record(chunk_size: int) -> Generator[PvRecorder, None, None]:
     try:
         yield recorder
     finally:
-        recorder.stop()
-        recorder.delete()
+        try:
+            recorder.stop()
+        finally:
+            recorder.delete()
