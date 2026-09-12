@@ -27,14 +27,10 @@ def test_named_timers_use_unicode_normalisation_and_reject_duplicates() -> None:
     context = ToolContext(state={})
 
     created = set_timer(
-        context,
-        {"name": "Cafe\u0301", "duration_seconds": 30},
-        clock=clock,
+        context, {"name": "Cafe\u0301", "duration_seconds": 30}, clock=clock
     )
     duplicate = set_timer(
-        context,
-        {"name": "CAFÉ", "duration_seconds": 10},
-        clock=clock,
+        context, {"name": "CAFÉ", "duration_seconds": 10}, clock=clock
     )
 
     assert isinstance(created, ToolResult)
@@ -71,7 +67,7 @@ def test_concurrent_timers_are_listed_and_stopped_exactly() -> None:
     assert isinstance(remaining, ToolResult)
     assert remaining.data is not None
     assert [item["name"] for item in remaining.data["timers"]] == [  # type: ignore[index]
-        "short",
+        "short"
     ]
 
 
@@ -80,7 +76,7 @@ def test_expiry_is_cleaned_up_and_notified() -> None:
     clock = FakeClock()
     notifications: list[str] = []
     state: dict[str, object] = {
-        "notification_callback": lambda timer: notifications.append(timer.name),
+        "notification_callback": lambda timer: notifications.append(timer.name)
     }
     context = ToolContext(state=state)
     set_timer(context, {"name": "tea", "duration_seconds": 10}, clock=clock)
@@ -99,10 +95,7 @@ def test_invalid_zero_and_out_of_range_durations_do_not_create_timers() -> None:
     context = ToolContext(state={})
 
     zero = set_timer(context, {"name": "zero", "duration_seconds": 0})
-    too_long = set_timer(
-        context,
-        {"name": "too long", "duration_seconds": 86_401},
-    )
+    too_long = set_timer(context, {"name": "too long", "duration_seconds": 86_401})
 
     assert isinstance(zero, ToolResult)
     assert isinstance(too_long, ToolResult)
@@ -117,14 +110,10 @@ def test_duration_boundaries_are_inclusive() -> None:
     context = ToolContext(state={})
 
     shortest = set_timer(
-        context,
-        {"name": "shortest", "duration_seconds": 1},
-        clock=clock,
+        context, {"name": "shortest", "duration_seconds": 1}, clock=clock
     )
     longest = set_timer(
-        context,
-        {"name": "longest", "duration_seconds": 86_400},
-        clock=clock,
+        context, {"name": "longest", "duration_seconds": 86_400}, clock=clock
     )
 
     assert isinstance(shortest, ToolResult)
@@ -176,7 +165,6 @@ def test_legacy_duration_callable_remains_supported() -> None:
     assert len(updated["running_timers"]) == 1  # type: ignore[arg-type]
 
     _, stopped = t.cast(
-        tuple[str, dict[str, object]],
-        stop_timer(state=updated, duration="0:00:05"),
+        tuple[str, dict[str, object]], stop_timer(state=updated, duration="0:00:05")
     )
     assert stopped["running_timers"] == []

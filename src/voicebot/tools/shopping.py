@@ -268,10 +268,11 @@ class ShoppingTools:
         )
 
     def remove_shopping_item(
-        self, context: ToolContext, arguments: dict[str, object]
+        self, context: ToolContext, arguments: c.Mapping[str, object]
     ) -> ToolResult:
         """Request confirmation, then remove one exact item."""
-        profile, account, failure = self._resolve_profile(context, arguments)
+        typed_arguments = dict(arguments)
+        profile, account, failure = self._resolve_profile(context, typed_arguments)
         if failure is not None:
             return failure
         assert profile is not None and account is not None
@@ -300,6 +301,7 @@ class ShoppingTools:
             "item_name": item_name,
             "action": "remove_shopping_item",
         }
+        context.state["_confirmation_arguments"] = typed_arguments
         if not self._confirmed(context=context, resolved=resolved):
             return ToolResult(
                 status=ToolStatus.CONFIRMATION_REQUIRED,
@@ -472,6 +474,8 @@ def build_shopping_tool_specs(
     item_aliases: NestedAliasMap | AliasMap | None = None,
     default_profile: str | None = None,
     default_lists: c.Mapping[str, str] | None = None,
+    confirmation_checker: c.Callable[[ToolContext, dict[str, object]], bool]
+    | None = None,
 ) -> tuple[ToolSpec, ...]:
     """Create Listonic tool specs for final registry assembly."""
     return ShoppingTools(
@@ -481,6 +485,7 @@ def build_shopping_tool_specs(
         item_aliases=item_aliases,
         default_profile=default_profile,
         default_lists=default_lists,
+        confirmation_checker=confirmation_checker,
     ).specs()
 
 

@@ -21,8 +21,11 @@ from .web_search import search_web
 def _set_timer(
     state: dict[str, object], arguments: dict[str, object]
 ) -> tuple[str, dict[str, object]]:
-    return set_timer(
-        state=state, duration_seconds=t.cast(int, arguments["duration_seconds"])
+    return t.cast(
+        tuple[str, dict[str, object]],
+        set_timer(
+            state=state, duration_seconds=t.cast(int, arguments["duration_seconds"])
+        ),
     )
 
 
@@ -30,7 +33,7 @@ def _list_timers(
     state: dict[str, object], arguments: dict[str, object]
 ) -> tuple[str, dict[str, object]]:
     del arguments
-    return list_timers(state=state)
+    return t.cast(tuple[str, dict[str, object]], list_timers(state=state))
 
 
 def _stop_timer(
@@ -48,7 +51,7 @@ def _stop_timer(
     ]
     if not matching_timers:
         return f"Der var ingen timer med navnet {name}.", state
-    return stop_timer(state=state, duration=name)
+    return t.cast(tuple[str, dict[str, object]], stop_timer(state=state, duration=name))
 
 
 def _weather(
@@ -168,20 +171,38 @@ _LEGACY_SCHEMAS: dict[str, dict[str, object]] = {
 }
 
 
-def build_registry(tools: list[dict[str, object]]) -> ToolRegistry:
-    """Build the allow-list from configured schemas and explicit adapters."""
+def build_registry(
+    tools: list[dict[str, object]],
+    *,
+    integration_specs: t.Iterable[ToolSpec] = (),
+    include_integrations: bool = False,
+    include_legacy: bool = True,
+) -> ToolRegistry:
+    """Build a closed registry from schemas and bound integration adapters.
+
+    ``integration_specs`` is intentionally separate from configuration. Configuration
+    controls which tools are model-visible; the application assembly supplies the
+    already-bound handlers. This prevents an unavailable placeholder from replacing a
+    real provider adapter.
+    """
     specs: list[ToolSpec] = []
     configured_names: set[str] = set()
+    bound = {spec.name: spec for spec in integration_specs}
+    allowed = MODEL_TOOL_NAMES | _LEGACY_SCHEMAS.keys() | {"lookup"}
     for tool in tools:
         name = tool.get("name")
         parameters = tool.get("parameters")
         if (
             not isinstance(name, str)
-            or name not in MODEL_TOOL_NAMES | _LEGACY_SCHEMAS.keys() | {"lookup"}
+            or name not in allowed
             or not isinstance(parameters, dict)
         ):
             continue
         configured_names.add(name)
+        spec = bound.get(name)
+        if spec is not None:
+            specs.append(spec)
+            continue
         adapter = LEGACY_TOOL_ADAPTERS.get(name)
         handler: ToolHandler = adapter if adapter is not None else _unavailable
         description = tool.get("description", "")
@@ -194,15 +215,21 @@ def build_registry(tools: list[dict[str, object]]) -> ToolRegistry:
             )
         )
 
-    for name, schema in _LEGACY_SCHEMAS.items():
-        if name not in configured_names:
-            adapter = LEGACY_TOOL_ADAPTERS[name]
-            specs.append(
-                ToolSpec(
-                    name=name,
-                    description="Legacy compatibility tool.",
-                    parameters=schema,
-                    handler=adapter,
+    if include_integrations:
+        for name, spec in bound.items():
+            if name not in configured_names:
+                specs.append(spec)
+                configured_names.add(name)
+
+    if include_legacy:
+        for name, schema in _LEGACY_SCHEMAS.items():
+            if name not in configured_names:
+                specs.append(
+                    ToolSpec(
+                        name=name,
+                        description="Legacy compatibility tool.",
+                        parameters=schema,
+                        handler=LEGACY_TOOL_ADAPTERS[name],
+                    )
                 )
-            )
     return ToolRegistry(specs=specs)

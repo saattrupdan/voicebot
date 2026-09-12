@@ -10,9 +10,22 @@ from __future__ import annotations
 import argparse
 import collections.abc as c
 import dataclasses
+import os
 import sys
 
-from voicebot.auth import ProviderAccount, ProviderAuthHandler, redact_text
+from voicebot.auth import (
+    CredentialStore,
+    ProviderAccount,
+    ProviderAuthHandler,
+    redact_text,
+)
+from voicebot.auth.google import GoogleCalendarAuthHandler
+from voicebot.auth.listonic import (
+    IsolatedBrowserFactory,
+    IsolatedBrowserSession,
+    ListonicAuthHandler,
+)
+from voicebot.auth.spotify import SpotifyAuthHandler
 
 DEFAULT_PROVIDERS = ("google-calendar", "spotify", "listonic")
 
@@ -93,6 +106,48 @@ def register_provider(provider: str, handler: ProviderAuthHandler) -> None:
     _default_registry.register(provider, handler)
 
 
+def register_integration_handlers(
+    registry: ProviderRegistry | None = None,
+    *,
+    credential_store: CredentialStore | None = None,
+    google_client_id: str | None = None,
+    google_client_secret: str | None = None,
+    spotify_client_id: str | None = None,
+    listonic_browser_factory: IsolatedBrowserFactory | None = None,
+) -> ProviderRegistry:
+    """Register the three local onboarding implementations.
+
+    Client IDs are read from the environment by default. Missing IDs leave OAuth
+    providers safely unconfigured rather than prompting for a secret on stdin.
+    """
+    active = registry or _default_registry
+    store = credential_store or CredentialStore()
+    google_id = google_client_id or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+    if google_id:
+        active.register(
+            "google-calendar",
+            GoogleCalendarAuthHandler(
+                credential_store=store,
+                client_id=google_id,
+                client_secret=google_client_secret
+                or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+            ),
+        )
+    spotify_id = spotify_client_id or os.environ.get("SPOTIFY_CLIENT_ID")
+    if spotify_id:
+        active.register(
+            "spotify", SpotifyAuthHandler(client_id=spotify_id, credential_store=store)
+        )
+    active.register(
+        "listonic",
+        ListonicAuthHandler(
+            credential_store=store,
+            browser_factory=listonic_browser_factory or _missing_browser_factory,
+        ),
+    )
+    return active
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -114,6 +169,8 @@ def main(
     parser = _build_parser()
     args = parser.parse_args(argv)
     active_registry = registry or _default_registry
+    if registry is None:
+        register_integration_handlers(active_registry)
     write_line = output or _write_line
     provider = getattr(args, "provider", None)
 
@@ -143,6 +200,11 @@ def main(
         write_line(f"{_normalise_provider(provider)}: operation failed")
         return 1
     return 0
+
+
+def _missing_browser_factory() -> IsolatedBrowserSession:
+    """Fail closed when no isolated-browser implementation is installed."""
+    raise RuntimeError("isolated Listonic browser is not installed")
 
 
 def _status(

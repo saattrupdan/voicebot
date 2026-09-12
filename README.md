@@ -1,44 +1,82 @@
 # Voicebot
 
-A simple Danish voice bot.
-
-______________________________________________________________________
-[![Code Coverage](https://img.shields.io/badge/Coverage-0%25-red.svg)](https://github.com/saattrupdan/voicebot/tree/main/tests)
-[![Documentation](https://img.shields.io/badge/docs-passing-green)](https://saattrupdan.github.io/voicebot/voicebot.html)
-[![License](https://img.shields.io/github/license/saattrupdan/voicebot)](https://github.com/saattrupdan/voicebot/blob/main/LICENSE)
-[![LastCommit](https://img.shields.io/github/last-commit/saattrupdan/voicebot)](https://github.com/saattrupdan/voicebot/commits/main)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.0-4baaaa.svg)](https://github.com/saattrupdan/voicebot/blob/main/CODE_OF_CONDUCT.md)
-
-Developer:
-
-- Dan Saattrup Smart (<saattrupdan@gmail.com>)
+A simple Danish voice bot with local timers, durable reminders, and opt-in provider
+integrations.
 
 ## Quick Start
 
-1. Run `make install`, which sets up a virtual environment and all Python dependencies therein.
+1. Run `make install` to create the environment and install dependencies.
 2. Add `SYV_API_KEY` and `MELIOUS_API_KEY` to `.env` when prompted.
-3. Run `make bot` to start the bot.
+3. Run `make bot`.
 
-Speech detection uses WebRTC VAD and an adaptive noise floor, so no manual microphone
-calibration is required. The detector adapts to sustained background noise while the bot
-is listening.
+The default configuration keeps Google Calendar, Spotify, and Listonic disabled. Named
+timers are local to the process; reminders are stored in
+`.local/state/voicebot.sqlite` and are delivered by the scheduler embedded in the bot.
+The scheduler uses a SQLite lease, so a restart recovers due notifications and does not
+deliver one reminder twice.
 
-## Conversation behaviour
+## Local setup and integration status
+
+Run the setup CLI without entering credentials on the command line:
+
+```sh
+uv run python src/scripts/integrations.py status
+uv run python src/scripts/integrations.py login spotify --profile dan
+uv run python src/scripts/integrations.py disconnect spotify --profile dan
+```
+
+Status output contains only provider, profile, and connection state. Disconnect revokes
+where supported and removes the local refresh credential. Refresh credentials live in
+the operating-system keyring by default; use `storage.credential_backend: memory` only
+for disposable tests. The database stores opaque credential references and aliases, not
+keys or tokens. Back up the database before migrations, but never copy `.env` or a
+keyring export into source control.
+
+Add spoken profile aliases under `profiles` (and select one installation default with
+`device.default_profile`). Calendar aliases, Spotify device aliases, and Listonic list
+aliases are setup-owned local mappings under their respective integration sections.
+Provider IDs in these mappings are never accepted as model arguments or spoken back.
+
+### OAuth providers
+
+Create local OAuth applications and set their client values in the environment before
+running setup:
+
+```sh
+export GOOGLE_OAUTH_CLIENT_ID=your-google-client-id
+export GOOGLE_OAUTH_CLIENT_SECRET=your-google-client-secret  # optional PKCE secret
+export SPOTIFY_CLIENT_ID=your-spotify-client-id
+```
+
+Register the loopback callback shown by the onboarding flow with each provider. Google
+requests read-only Calendar scopes. Spotify playback control requires a Spotify Premium
+account and an account with playback permission; inactive or ambiguous devices are
+reported instead of guessed.
+
+### Listonic warning
+
+Listonic support is an unofficial, contract-pinned integration. It is disabled unless
+both `integrations.listonic.enabled` and
+`integrations.listonic.allow_unofficial` are true. Login uses an isolated browser
+session and never asks the bot for a Listonic password. Keep it disabled unless the
+operational risk of an undocumented API is acceptable; contract drift fails closed.
+Removing an individual item requires a local yes/no confirmation. List creation,
+sharing, whole-list deletion, and other unsupported operations remain unavailable.
+
+## Conversation and audio behaviour
 
 Model responses and Plapre audio use streaming APIs, and each response is synthesised in
-sentence-sized pieces so playback does not wait for all TTS audio. The microphone remains
-active during generation and playback; confirmed speech
-stops the current response and is processed as a follow-up. Speaker echo can still cause
-false interruptions without acoustic echo cancellation, so headphones or a directional
-microphone work best.
-
-Clear endings such as `stop`, `ti stille`, `tak`, and `farvel` end the interaction without
-a spoken reply. A new wake word is then required.
+sentence-sized pieces. The microphone remains active during generation and playback;
+confirmed speech stops the current response and is processed as a follow-up. Reminder
+and timer alarms use the same bot-owned synthesiser and can be dismissed by barge-in.
+A clear ending such as `stop`, `ti stille`, `tak`, or `farvel` ends the interaction
+silently and requires a new wake word. This rule remains unchanged when no alarm is
+active.
 
 Weather lookup remembers a successful location and falls back from ipapi.co to ipwho.is.
 Set `weather_default_location` in `config/config.yaml` to provide a final fallback when
 neither IP service is available.
 
-The configured transcription endpoint accepts complete audio files rather than a realtime
-microphone stream. Transcription therefore starts as soon as an utterance ends, but true
-on-the-go ASR requires a realtime endpoint from the provider.
+The configured transcription endpoint accepts complete audio files rather than a
+realtime microphone stream. Transcription therefore starts as soon as an utterance ends,
+but true on-the-go ASR requires a realtime endpoint from the provider.

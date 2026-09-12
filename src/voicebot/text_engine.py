@@ -21,7 +21,7 @@ from openai.types.chat import (
 )
 
 from . import tools as tool_module
-from .intents import is_end_conversation
+from .intents import confirmation_decision, is_end_conversation
 from .tool_runtime import ToolContext, ToolResult, ToolRuntime, ToolStatus
 from .utils import MONTHS, WEEKDAYS
 
@@ -61,7 +61,13 @@ class _ToolCallParts:
 class TextEngine:
     """The engine that produces new responses."""
 
-    def __init__(self, cfg: DictConfig) -> None:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        *,
+        runtime: ToolRuntime | None = None,
+        state: dict[str, object] | None = None,
+    ) -> None:
         """Initialise the engine.
 
         Args:
@@ -75,8 +81,18 @@ class TextEngine:
         self.conversation: list[ChatCompletionMessageParam] = list()
         raw_tools = t.cast(list[dict[str, object]], OmegaConf.to_object(self.cfg.tools))
         self.tools = self._format_tools(tools=raw_tools)
-        self.runtime = ToolRuntime(registry=tool_module.build_registry(tools=raw_tools))
-        self.state: dict[str, object] = dict()
+        assembled = None
+        if runtime is None and state is None and "integrations" in self.cfg:
+            from .runtime import build_integration_runtime
+
+            assembled = build_integration_runtime(self.cfg)
+            runtime = assembled.registry
+            state = assembled.state
+        self.runtime = runtime or ToolRuntime(
+            registry=tool_module.build_registry(tools=raw_tools)
+        )
+        self.state = state if state is not None else {}
+        self.integration_runtime = assembled
 
     def generate_response(
         self,
@@ -108,6 +124,19 @@ class TextEngine:
             logger.info("The user ended the conversation.")
             self.reset_conversation()
             return TurnResult(action=TurnAction.END)
+
+        decision = confirmation_decision(prompt)
+        confirmation_handler = self.state.get("confirmation_handler")
+        if decision is not None and callable(confirmation_handler):
+            result = confirmation_handler(decision)
+            if isinstance(result, ToolResult):
+                message = self._clean_response(result.message_da)
+                return TurnResult(
+                    action=TurnAction.RESPOND if message else TurnAction.SILENT,
+                    text=message,
+                )
+            if isinstance(result, TurnResult):
+                return result
 
         if len(prompt.strip()) <= self.cfg.min_prompt_length:
             logger.info("The prompt is too short, ignoring it.")
