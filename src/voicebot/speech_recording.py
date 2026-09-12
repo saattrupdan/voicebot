@@ -32,11 +32,19 @@ class _Vad(t.Protocol):
 
 @dataclass(frozen=True)
 class VoiceActivity:
-    """The result of processing one recorder chunk."""
+    """The result of processing one recorder chunk.
+
+    ``onset_sample_offset`` is relative to the start of the processed chunk. It can
+    be negative when the consecutive candidate run began in an earlier chunk.
+    ``candidate_sample_offset`` has the same meaning for an onset which is still
+    pending confirmation.
+    """
 
     speech_detected: bool
     onset: bool
     ended: bool
+    onset_sample_offset: int | None = None
+    candidate_sample_offset: int | None = None
 
 
 class AdaptiveVoiceActivityDetector:
@@ -156,6 +164,7 @@ class AdaptiveVoiceActivityDetector:
         self.pre_roll_seconds = pre_roll_seconds
         self._noise_floor = float(initial_noise_floor)
         self._onset_run = 0
+        self._onset_start_offset: int | None = None
         self._silence_run = 0
         self._active = False
         self._vad = vad if vad is not None else webrtcvad.Vad(vad_mode)
@@ -218,6 +227,7 @@ class AdaptiveVoiceActivityDetector:
     def reset_activity(self) -> None:
         """Reset onset and trailing-silence state without discarding the floor."""
         self._onset_run = 0
+        self._onset_start_offset = None
         self._silence_run = 0
         self._active = False
 
@@ -242,6 +252,8 @@ class AdaptiveVoiceActivityDetector:
             return VoiceActivity(speech_detected=False, onset=False, ended=False)
 
         onset = False
+        onset_sample_offset: int | None = None
+        candidate_sample_offset: int | None = None
         speech_detected = False
         ended = False
         candidate_seen = False
@@ -270,6 +282,8 @@ class AdaptiveVoiceActivityDetector:
             candidate = vad_speech and rms >= self._noise_floor * self.speech_start_snr
             if candidate:
                 candidate_seen = True
+                if self._onset_run == 0:
+                    self._onset_start_offset = index * self.samples_per_frame
                 self._onset_run += 1
                 speech_detected = True
                 # Once a possible onset is present, the floor is frozen until it is
@@ -278,20 +292,35 @@ class AdaptiveVoiceActivityDetector:
                     self._active = True
                     self._silence_run = 0
                     onset = True
+                    onset_sample_offset = self._onset_start_offset
+                    self._onset_start_offset = None
                     break
             else:
                 if not vad_speech:
                     self._onset_run = 0
+                    self._onset_start_offset = None
                     if update_noise_floor:
                         idle_rms.append(rms)
                 else:
                     self._onset_run = 0
+                    self._onset_start_offset = None
+
+        if not self._active and self._onset_run:
+            candidate_sample_offset = self._onset_start_offset
+            if self._onset_start_offset is not None:
+                self._onset_start_offset -= len(pcm)
 
         if not self._active and update_noise_floor and idle_rms and not candidate_seen:
             # A median across the chunk means one click cannot become a new floor.
             self._update_noise_floor(float(np.median(idle_rms)))
 
-        return VoiceActivity(speech_detected=speech_detected, onset=onset, ended=ended)
+        return VoiceActivity(
+            speech_detected=speech_detected,
+            onset=onset,
+            ended=ended,
+            onset_sample_offset=onset_sample_offset,
+            candidate_sample_offset=candidate_sample_offset,
+        )
 
     def _update_noise_floor(self, rms: float) -> None:
         rate = (
@@ -374,11 +403,26 @@ def record_speech(
                         pre_roll.clear()
                     continue
 
+                post_wake_chunk_start = post_wake_samples
+                if armed_after_wake:
+                    post_wake_samples += frame.size
+
                 activity = detector.process_chunk(frame)
                 if not detector.active and pre_roll_chunks:
                     pre_roll.append(frame)
 
                 if activity.onset:
+                    if armed_after_wake:
+                        onset_offset = activity.onset_sample_offset
+                        if (
+                            onset_offset is None
+                            or post_wake_chunk_start + onset_offset
+                            > post_wake_onset_samples
+                        ):
+                            detector.reset_activity()
+                            wake_word_model.reset()
+                            return np.empty(0, dtype=np.int16), None
+
                     seconds_since_last_response = (
                         dt.datetime.now() - last_response_time
                     ).total_seconds()
@@ -400,8 +444,14 @@ def record_speech(
                         continue
 
                 if armed_after_wake:
-                    post_wake_samples += frame.size
-                    if post_wake_samples >= post_wake_onset_samples:
+                    candidate_offset = activity.candidate_sample_offset
+                    if candidate_offset is not None:
+                        candidate_start = post_wake_chunk_start + candidate_offset
+                        if candidate_start > post_wake_onset_samples:
+                            detector.reset_activity()
+                            wake_word_model.reset()
+                            return np.empty(0, dtype=np.int16), None
+                    elif post_wake_samples >= post_wake_onset_samples:
                         detector.reset_activity()
                         wake_word_model.reset()
                         return np.empty(0, dtype=np.int16), None

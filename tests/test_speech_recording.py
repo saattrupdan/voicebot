@@ -93,6 +93,24 @@ def test_speech_requires_consecutive_frames() -> None:
     assert detector.active
 
 
+def test_onset_offset_spans_chunks_and_clears_after_abandonment() -> None:
+    """Onset metadata names the first candidate frame and is not retained."""
+    detector = _detector(onset_frames=2)
+
+    pending = detector.process_chunk(_chunk(2_000, size=320))
+    assert pending.candidate_sample_offset == 0
+    confirmed = detector.process_chunk(_chunk(2_000, size=320))
+    assert confirmed.onset
+    assert confirmed.onset_sample_offset == -320
+
+    detector.reset_activity()
+    abandoned = detector.process_chunk(_chunk(2_000, size=320))
+    assert abandoned.candidate_sample_offset == 0
+    cleared = detector.process_chunk(_chunk(0, size=320))
+    assert cleared.onset_sample_offset is None
+    assert cleared.candidate_sample_offset is None
+
+
 def test_start_and_end_snr_thresholds_are_independent() -> None:
     """The lower end threshold retains speech which cannot trigger onset."""
     detector = _detector(onset_frames=1, max_silence_frames=4, vad=_AlwaysSpeechVad())
@@ -230,6 +248,74 @@ def test_wake_word_path_works_outside_follow_up_window(
             [_chunk(2_000, size=320), _chunk(2_100, size=320), _chunk(0, size=320)]
         ),
     )
+    synthesiser.assert_called_once()
+
+
+def test_post_wake_onset_just_before_non_aligned_deadline_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A candidate beginning just before the deadline may confirm afterwards."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    chunks = [
+        _chunk(2_000),
+        _chunk(0),
+        np.concatenate([_chunk(0, size=960), _chunk(2_000, size=320)]),
+        np.concatenate([_chunk(2_000, size=320), _chunk(0, size=960)]),
+        _chunk(0),
+    ]
+    monkeypatch.setattr(speech_recording, "record", _recorder(chunks))
+    wake_word = MagicMock()
+    wake_word.predict.return_value = {"hey_jarvis": 1.0}
+    synthesiser = MagicMock()
+    monkeypatch.setattr(speech_recording, "synthesise_speech", synthesiser)
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=MagicMock(),
+        cfg=_config(max_seconds_silence=0.0625),
+    )
+
+    assert started is not None
+    assert audio.size > 0
+    synthesiser.assert_called_once()
+
+
+def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A candidate beginning just after the deadline is rejected immediately."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    recorder = MagicMock()
+    chunks = [
+        _chunk(2_000),
+        _chunk(0),
+        _chunk(0),
+        np.concatenate(
+            [_chunk(0, size=320), _chunk(2_000, size=640), _chunk(0, size=320)]
+        ),
+    ]
+    monkeypatch.setattr(
+        speech_recording, "record", _recorder(chunks, recorder=recorder)
+    )
+    wake_word = MagicMock()
+    wake_word.predict.return_value = {"hey_jarvis": 1.0}
+    synthesiser = MagicMock()
+    monkeypatch.setattr(speech_recording, "synthesise_speech", synthesiser)
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=MagicMock(),
+        cfg=_config(max_seconds_silence=0.09375),
+    )
+
+    assert audio.dtype == np.int16
+    assert audio.size == 0
+    assert started is None
+    assert recorder.read.call_count == 4
     synthesiser.assert_called_once()
 
 
