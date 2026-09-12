@@ -6,6 +6,8 @@ import datetime as dt
 import pathlib
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from voicebot.notifications import DeliveryOutcome, NotificationDispatcher
 from voicebot.scheduler import ReminderScheduler
 from voicebot.storage import Storage
@@ -138,6 +140,46 @@ def test_restart_recovery_and_duplicate_prevention(tmp_path: pathlib.Path) -> No
         assert len(recovered) == 1
         assert recovered[0].reminder_id == reminder.id
         assert storage.reminders.get(reminder.id) is not None
+
+
+def test_dispatcher_requires_explicit_success_outcome() -> None:
+    """A callback without complete playback leaves the reminder retryable."""
+    with Storage() as storage:
+        profile = storage.profiles.create("Home", now=NOW)
+        storage.reminders.create(profile.id, "hello", NOW, now=NOW)
+        assert ReminderScheduler(storage, clock=lambda: NOW).tick() == 1
+        dispatcher = NotificationDispatcher(
+            storage, callback=lambda notification, event: None, clock=lambda: NOW
+        )
+
+        dispatcher.deliver_once()
+
+        assert not storage.reminders.list(status="delivered")
+        assert storage.notifications.claim(
+            owner="retry", now=NOW + dt.timedelta(minutes=6)
+        )
+
+
+def test_dispatcher_does_not_log_callback_exception_details(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Notification logs contain IDs but not provider exception text."""
+    with Storage() as storage:
+        profile = storage.profiles.create("Home", now=NOW)
+        storage.reminders.create(profile.id, "hello", NOW, now=NOW)
+        assert ReminderScheduler(storage, clock=lambda: NOW).tick() == 1
+
+        def callback(notification: object, event: object) -> None:
+            del notification, event
+            raise RuntimeError("provider-secret")
+
+        dispatcher = NotificationDispatcher(
+            storage, callback=callback, clock=lambda: NOW
+        )
+        with caplog.at_level("ERROR"):
+            dispatcher.deliver_once()
+
+    assert "provider-secret" not in caplog.text
 
 
 def test_cancel_is_exact_and_dispatch_acknowledges() -> None:

@@ -149,7 +149,7 @@ class TextEngine:
             logger.info("The prompt is too short, ignoring it.")
             return TurnResult(action=TurnAction.SILENT)
 
-        logger.info(f"Generating a response from the prompt: {prompt!r}...")
+        logger.info("Generating response prompt_length=%d", len(prompt))
         self._start_conversation_if_needed(
             last_response_time=last_response_time,
             current_response_time=current_response_time,
@@ -178,7 +178,11 @@ class TextEngine:
         if result.action is TurnAction.END:
             self.reset_conversation()
         elif result.text:
-            logger.info(f"Generated the response: {result.text!r}")
+            logger.info(
+                "Generated response action=%s text_length=%d",
+                result.action,
+                len(result.text),
+            )
         return result
 
     def reset_conversation(self) -> None:
@@ -305,12 +309,10 @@ class TextEngine:
                                     parts.arguments += tool_call.function.arguments
                 finally:
                     stream.close()
-            except (AttributeError, TypeError, openai.APIError) as error:
+            except AttributeError, TypeError, openai.APIError:
                 if received_delta:
                     raise
-                logger.warning(
-                    f"Streaming completion unavailable, falling back: {error}"
-                )
+                logger.warning("Streaming completion unavailable; falling back")
                 result = self._complete_conversation()
                 if result.text and not cancel_event.is_set():
                     on_segment(result.text)
@@ -458,7 +460,7 @@ class TextEngine:
         text = text.replace("()", "").strip()
         for before, after in self.cfg.manual_fixes.items():
             if before in text:
-                logger.info(f"Fixing {before!r} to {after!r} in the response.")
+                logger.info("Applied a configured response text fix")
                 text = text.replace(before, after)
         return text
 

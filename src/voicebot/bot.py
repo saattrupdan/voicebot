@@ -19,7 +19,7 @@ from .notifications import DeliveryOutcome
 from .runtime import build_integration_runtime
 from .speech_recognition import transcribe_speech
 from .speech_recording import create_voice_activity_detector, record_speech
-from .speech_synthesis import SpeechSynthesiser, synthesise_speech
+from .speech_synthesis import PlaybackOutcome, SpeechSynthesiser, synthesise_speech
 from .text_engine import TextEngine, TurnAction, TurnResult
 
 load_dotenv()
@@ -124,11 +124,11 @@ class VoiceBot:
 
                     def interrupt() -> None:
                         cancel_response.set()
-                        self.synthesiser.stop()
                         for (
                             notification_id
                         ) in self.integration_runtime.dispatcher.active_ids:
                             self.integration_runtime.dispatcher.cancel(notification_id)
+                        self.synthesiser.stop()
                         with self._timer_alarm_lock:
                             for event in self._timer_alarm_events.values():
                                 event.set()
@@ -168,14 +168,12 @@ class VoiceBot:
         message = payload.get("message") if isinstance(payload, dict) else None
         if not isinstance(message, str) or not message.strip():
             return DeliveryOutcome.dismissed()
-        synthesise_speech(
+        playback = synthesise_speech(
             text=message, synthesiser=self.synthesiser, cancel_event=cancel_event
         )
-        return (
-            DeliveryOutcome.dismissed()
-            if cancel_event.is_set()
-            else DeliveryOutcome.delivered()
-        )
+        if playback is PlaybackOutcome.COMPLETE:
+            return DeliveryOutcome.delivered()
+        return DeliveryOutcome.retry()
 
     def _deliver_timer_alarm(self, timer: object) -> None:
         """Speak a named timer alarm, allowing barge-in to dismiss it."""
@@ -237,10 +235,8 @@ class VoiceBot:
                 prompt=prompt,
                 last_response_time=last_response_time,
                 current_response_time=current_response_time,
-                on_segment=lambda segment: synthesise_speech(
-                    text=segment,
-                    synthesiser=self.synthesiser,
-                    cancel_event=cancel_event,
+                on_segment=lambda segment: self._speak_segment(
+                    segment=segment, cancel_event=cancel_event
                 ),
                 cancel_event=cancel_event,
             )
@@ -248,3 +244,9 @@ class VoiceBot:
             state.error = error
         finally:
             done_event.set()
+
+    def _speak_segment(self, segment: str, cancel_event: threading.Event) -> None:
+        """Speak one generated segment while discarding its playback result."""
+        synthesise_speech(
+            text=segment, synthesiser=self.synthesiser, cancel_event=cancel_event
+        )
