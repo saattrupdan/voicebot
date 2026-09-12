@@ -1,6 +1,6 @@
 # Voicebot tool integrations plan
 
-Status: Draft for review
+Status: Implemented defaults; provider connections remain opt-in
 
 This document proposes named timers, persistent reminders, read-only Google Calendar,
 Spotify playback control, and Listonic shopping-list tools for the Danish voicebot.
@@ -694,14 +694,22 @@ storage:
     credential_backend: keyring
     master_key_env: VOICEBOT_MASTER_KEY
 
+profiles:
+    dan:
+        aliases: [Dan, mig]
+
 integrations:
     google_calendar:
         enabled: false
+        calendar_aliases: {}
     spotify:
         enabled: false
+        default_profile: dan
+        device_aliases: {}
     listonic:
         enabled: false
         allow_unofficial: false
+        list_aliases: {}
 
 scheduler:
     poll_seconds: 1
@@ -862,27 +870,28 @@ Rollback rules:
 - A Listonic contract failure disables only Listonic.
 - Never fall back to browser automation during normal bot operation.
 
-## Decisions for review
+## Implemented defaults
 
-The following defaults should be revised before implementation:
+The end-to-end assembly uses these defaults (and the configuration file is the source
+of truth for local routing):
 
-- [ ] Use `Europe/Copenhagen` as the default timezone.
-- [ ] Keep cooking timers non-persistent with a maximum duration of 24 hours.
-- [ ] Deliver reminders up to 15 minutes late after downtime.
-- [ ] Report older missed reminders only on the next interaction.
-- [ ] Use one default profile per physical voicebot installation.
-- [ ] Require explicit names for other people's calendars.
-- [ ] Choose one household Google account or separate OAuth accounts per person.
-- [ ] Speak private calendar events as “Optaget.”
-- [ ] Decide whether calendar event locations may be spoken.
-- [ ] Choose the default Spotify account and default-device behaviour.
-- [ ] Confirm that Spotify volume above 80 percent requires confirmation.
-- [ ] Choose the default Listonic shopping list.
-- [ ] Keep Listonic list creation, sharing, and whole-list deletion unavailable.
-- [ ] Confirm that removing an individual Listonic item requires confirmation.
-- [ ] Accept the operational risk of enabling Listonic's unofficial API.
-- [ ] Decide whether a headless deployment may use encrypted-file credential storage
-      when an operating-system keyring is unavailable.
+- [x] `Europe/Copenhagen` is the default timezone.
+- [x] Cooking timers are non-persistent and limited to 24 hours.
+- [x] Reminders are delivered up to 15 minutes late after downtime.
+- [x] Older reminders are marked missed and reported on a later interaction.
+- [x] One default profile is used per physical voicebot installation.
+- [x] Other people's calendars require an explicit profile name.
+- [x] Each profile may have its own least-privilege Google account.
+- [x] Private calendar events are reduced to busy intervals.
+- [x] Calendar locations are not exposed by the tool contract.
+- [x] Spotify uses the configured profile and exact device aliases.
+- [x] Volume is bounded to 0-100 and provider policy errors are surfaced safely.
+- [x] Listonic has an explicit default list and remains disabled by default.
+- [x] List creation, sharing, and whole-list deletion remain unavailable.
+- [x] Removing an individual Listonic item requires local confirmation.
+- [x] Listonic's unofficial API requires explicit operator acknowledgement.
+- [x] Headless deployments use memory-only credentials unless an OS keyring is available;
+      encrypted-file credential storage is not silently enabled.
 
 ## Definition of done
 

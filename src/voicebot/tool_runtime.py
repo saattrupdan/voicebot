@@ -207,6 +207,15 @@ class ToolRuntime:
         """Register an allow-listed tool before serving requests."""
         self.registry.register(spec=spec)
 
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Return the names in the live allow-list."""
+        return self.registry.names
+
+    def schemas(self) -> list[dict[str, object]]:
+        """Return the live model-visible schemas."""
+        return self.registry.schemas()
+
     def replace(self, spec: ToolSpec) -> None:
         """Replace an unavailable adapter with a provider implementation."""
         self.registry.replace(spec=spec)

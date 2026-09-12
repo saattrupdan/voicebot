@@ -12,6 +12,17 @@ _END_PATTERNS = (
 )
 
 
+def confirmation_decision(text: str) -> bool | None:
+    """Return a local yes/no decision, or ``None`` for an unrelated utterance."""
+    normalised = re.sub(r"[^\\wæøå]+", " ", text.casefold()).strip()
+    normalised = re.sub(r"\\s+", " ", normalised)
+    if normalised in {"ja", "jep", "yes", "okay", "ok", "bekræft", "bekræfter"}:
+        return True
+    if normalised in {"nej", "no", "ellers ikke", "annuller", "drop det"}:
+        return False
+    return None
+
+
 def is_end_conversation(text: str) -> bool:
     """Return whether an utterance clearly ends the conversation.
 

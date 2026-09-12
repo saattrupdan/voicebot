@@ -69,9 +69,7 @@ class Timer:
             self.start_time = self.clock()
             self.deadline = self.start_time + self.duration_seconds
             self._thread = threading.Thread(
-                target=self._wait_for_deadline,
-                name=f"timer-{self.name}",
-                daemon=True,
+                target=self._wait_for_deadline, name=f"timer-{self.name}", daemon=True
             )
             self._thread.start()
         return self
@@ -92,9 +90,7 @@ class Timer:
         """Whether the timer is still active."""
         with self._lock:
             return (
-                self.deadline is not None
-                and not self._stopped
-                and not self._completed
+                self.deadline is not None and not self._stopped and not self._completed
             )
 
     @property
@@ -150,9 +146,11 @@ class Timer:
             time_strings.append(f"{minutes} minutter")
         if seconds or not time_strings:
             time_strings.append(f"{seconds} sekunder")
-        return ", ".join(time_strings[:-1]) + " og " + time_strings[-1] if len(
-            time_strings
-        ) > 1 else time_strings[0]
+        return (
+            ", ".join(time_strings[:-1]) + " og " + time_strings[-1]
+            if len(time_strings) > 1
+            else time_strings[0]
+        )
 
     def _wait_for_deadline(self) -> None:
         """Wait without creating a child process, then deliver the alarm."""
@@ -563,8 +561,7 @@ def _state_lock(state: dict[str, object]) -> threading.RLock:
 
 
 def _arguments(
-    name: str | int | dict[str, object] | None,
-    duration_seconds: int | None,
+    name: str | int | dict[str, object] | None, duration_seconds: int | None
 ) -> dict[str, object]:
     """Convert supported typed call forms into an argument mapping."""
     if isinstance(name, dict):
@@ -580,10 +577,7 @@ def _argument_name(name: str | dict[str, object] | None) -> str | None:
     return name
 
 
-def _valid_name_argument(
-    name: str | dict[str, object] | None,
-    optional: bool,
-) -> bool:
+def _valid_name_argument(name: str | dict[str, object] | None, optional: bool) -> bool:
     """Validate a name or nullable name argument."""
     value: object = name.get("name") if isinstance(name, dict) else name
     if value is None:
@@ -592,8 +586,7 @@ def _valid_name_argument(
 
 
 def _legacy_duration(
-    name: str | int | dict[str, object] | None,
-    duration_seconds: int | None,
+    name: str | int | dict[str, object] | None, duration_seconds: int | None
 ) -> int:
     """Extract the old duration-only call's duration."""
     value: object = duration_seconds if duration_seconds is not None else name

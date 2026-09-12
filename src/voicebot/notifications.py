@@ -91,6 +91,12 @@ class NotificationDispatcher:
         """Alias for :meth:`deliver_once` used by worker loops."""
         return self.deliver_once(limit=limit)
 
+    @property
+    def active_ids(self) -> tuple[str, ...]:
+        """Return notification IDs currently being spoken by this worker."""
+        with self._lock:
+            return tuple(self._active)
+
     def cancel(self, notification_id: str) -> bool:
         """Cancel an in-flight delivery and dismiss its durable queue item."""
         with self._lock:
