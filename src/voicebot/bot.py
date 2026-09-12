@@ -12,7 +12,7 @@ from omegaconf import DictConfig
 from openwakeword.utils import download_models as download_wakeword_models
 
 from .speech_recognition import transcribe_speech
-from .speech_recording import calibrate_audio_threshold, record_speech
+from .speech_recording import create_voice_activity_detector, record_speech
 from .speech_synthesis import SpeechSynthesiser, synthesise_speech
 from .text_engine import TextEngine
 
@@ -32,10 +32,7 @@ class VoiceBot:
         """
         self.cfg = cfg
 
-        if cfg.calibrate:
-            self.audio_threshold = calibrate_audio_threshold(cfg=self.cfg)
-        else:
-            self.audio_threshold = cfg.audio_threshold
+        self.speech_detector = create_voice_activity_detector(cfg=self.cfg)
 
         logger.info("Loading the wake word model...")
         ort.set_default_logger_severity(3)
@@ -68,7 +65,7 @@ class VoiceBot:
         while True:
             speech, audio_start = record_speech(
                 last_response_time=last_response_time,
-                audio_threshold=self.audio_threshold,
+                detector=self.speech_detector,
                 cfg=self.cfg,
                 synthesiser=self.synthesiser,
                 wake_word_model=self.wake_word_model,

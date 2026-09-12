@@ -18,3 +18,7 @@ Developer:
 1. Run `make install`, which sets up a virtual environment and all Python dependencies therein.
 2. Add `SYV_API_KEY` and `MELIOUS_API_KEY` to `.env` when prompted.
 3. Run `make bot` to start the bot.
+
+Speech detection uses WebRTC VAD and an adaptive noise floor, so no manual microphone
+calibration is required. The detector adapts to sustained background noise while the bot
+is listening.
