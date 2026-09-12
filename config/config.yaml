@@ -64,75 +64,260 @@ system_prompt: >
 
   Today is {weekday}, {month} {day} {year} and the time is {time} (in 24-hour
   format), but you don't need to say that.
+# Model-visible tools. Every argument is required; nullable fields represent optional input.
 tools:
   - type: function
     strict: true
-    name: get_weather
-    description: >
-      The weather forecast for today and tomorrow.
-    parameters:
-      type: object
-      properties:
-        location:
-          type: string
-          description: >
-            The city to get the weather for, or an empty string to use the current
-            location.
-      required:
-        - location
-  - type: function
-    strict: true
     name: set_timer
-    description: Set a timer.
+    description: Create a uniquely named local timer.
     parameters:
       type: object
+      additionalProperties: false
       properties:
-        duration_seconds:
-          type: number
-          description: >
-            The duration of the timer in seconds.
-      required:
-        - duration_seconds
-  - type: function
-    strict: true
-    name: stop_timer
-    description: Stop a timer.
-    parameters:
-      type: object
-      properties:
-        duration:
-          type: string
-          description: >
-            The duration of the timer to stop, in the format 'HH:MM:SS', or null to
-            stop the timer with the shortest duration. If not specified then default
-            to None.
+        name: {type: string}
+        duration_seconds: {type: integer, minimum: 1, maximum: 86400}
+      required: [name, duration_seconds]
   - type: function
     strict: true
     name: list_timers
-    description: List all timers.
-  - type: function
-    strict: true
-    name: get_news
-    description: The latest news.
-  - type: function
-    strict: true
-    name: search_web
-    description: >
-      Search the web for a given query. Use this whenever you need to answer trivia-like
-      questions. Always mention the source of the information.
+    description: List active timers, optionally matching one name.
     parameters:
       type: object
+      additionalProperties: false
       properties:
-        keywords:
-          type: string
-          description: >
-            The keywords to search for.
-      required:
-        - keywords
+        name: {type: [string, 'null']}
+      required: [name]
   - type: function
     strict: true
-    name: meow
-    description: Make a meow cat sound.
+    name: stop_timer
+    description: Stop exactly one named timer.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string}
+      required: [name]
+  - type: function
+    strict: true
+    name: create_reminder
+    description: Create a persistent reminder.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        name: {type: [string, 'null']}
+        message: {type: string}
+        delay_seconds: {type: [integer, 'null'], minimum: 1}
+        due_at: {type: [string, 'null'], format: date-time}
+      required: [profile_name, name, message, delay_seconds, due_at]
+      oneOf:
+        - additionalProperties: true
+          properties:
+            delay_seconds: {type: integer, minimum: 1}
+            due_at: {type: 'null'}
+        - additionalProperties: true
+          properties:
+            delay_seconds: {type: 'null'}
+            due_at: {type: string, format: date-time}
+  - type: function
+    strict: true
+    name: list_reminders
+    description: List reminders in a bounded interval.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        starts_at: {type: [string, 'null'], format: date-time}
+        ends_at: {type: [string, 'null'], format: date-time}
+        status: {type: string, enum: [pending, delivered, missed, all]}
+      required: [profile_name, starts_at, ends_at, status]
+  - type: function
+    strict: true
+    name: cancel_reminder
+    description: Cancel one reminder by name.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        reminder_name: {type: string}
+      required: [profile_name, reminder_name]
+  - type: function
+    strict: true
+    name: list_calendar_events
+    description: List chronological calendar events.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        calendar_name: {type: [string, 'null']}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+        query: {type: [string, 'null']}
+        max_results: {type: integer, minimum: 1, maximum: 50}
+      required: [profile_name, calendar_name, starts_at, ends_at, query, max_results]
+  - type: function
+    strict: true
+    name: get_calendar_availability
+    description: Get busy calendar intervals without event details.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_names:
+          type: array
+          items: {type: string}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+      required: [profile_names, starts_at, ends_at]
+  - type: function
+    strict: true
+    name: spotify_play
+    description: Search and start one Spotify item.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        query: {type: string}
+        media_type: {type: [string, 'null'], enum: [track, album, artist, playlist, show, episode, null]}
+        device_name: {type: [string, 'null']}
+      required: [profile_name, query, media_type, device_name]
+  - type: function
+    strict: true
+    name: spotify_control
+    description: Control current Spotify playback.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        action: {type: string, enum: [pause, resume, next, previous]}
+        device_name: {type: [string, 'null']}
+      required: [profile_name, action, device_name]
+  - type: function
+    strict: true
+    name: spotify_set_volume
+    description: Set the volume on one Spotify device.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        volume_percent: {type: integer, minimum: 0, maximum: 100}
+        device_name: {type: [string, 'null']}
+      required: [profile_name, volume_percent, device_name]
+  - type: function
+    strict: true
+    name: spotify_now_playing
+    description: Return the current Spotify item and playback state.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+      required: [profile_name]
+  - type: function
+    strict: true
+    name: spotify_list_devices
+    description: List available Spotify device aliases.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+      required: [profile_name]
+  - type: function
+    strict: true
+    name: list_shopping_lists
+    description: List configured shopping-list aliases.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+      required: [profile_name]
+  - type: function
+    strict: true
+    name: get_shopping_list
+    description: Return a bounded shopping list.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        list_name: {type: [string, 'null']}
+        include_checked: {type: boolean}
+      required: [profile_name, list_name, include_checked]
+  - type: function
+    strict: true
+    name: add_shopping_items
+    description: Add one or more shopping items.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        list_name: {type: [string, 'null']}
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              name: {type: string}
+              amount: {type: [number, 'null']}
+              unit: {type: [string, 'null']}
+            required: [name, amount, unit]
+      required: [profile_name, list_name, items]
+  - type: function
+    strict: true
+    name: set_shopping_item_checked
+    description: Mark exactly one shopping item as bought or not bought.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        list_name: {type: [string, 'null']}
+        item_name: {type: string}
+        checked: {type: boolean}
+      required: [profile_name, list_name, item_name, checked]
+  - type: function
+    strict: true
+    name: remove_shopping_item
+    description: Remove exactly one shopping item after confirmation.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_name: {type: [string, 'null']}
+        list_name: {type: [string, 'null']}
+        item_name: {type: string}
+      required: [profile_name, list_name, item_name]
+
+# Local routing configuration contains no credentials.
+locale: da-DK
+timezone: Europe/Copenhagen
+device:
+  id: kitchen-speaker
+  default_profile: dan
+storage:
+  database_path: .local/state/voicebot.sqlite
+  credential_backend: keyring
+  master_key_env: VOICEBOT_MASTER_KEY
+integrations:
+  google_calendar: {enabled: false}
+  spotify: {enabled: false}
+  listonic: {enabled: false, allow_unofficial: false}
+scheduler:
+  poll_seconds: 1
+  lease_seconds: 30
+  missed_grace_seconds: 900
 
 # Parameters for all text outputs - these are specific to the ASR and text engine models
 manual_fixes:

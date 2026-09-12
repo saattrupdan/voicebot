@@ -22,6 +22,7 @@ from openai.types.chat import (
 
 from . import tools as tool_module
 from .intents import is_end_conversation
+from .tool_runtime import ToolContext, ToolResult, ToolRuntime, ToolStatus
 from .utils import MONTHS, WEEKDAYS
 
 load_dotenv()
@@ -74,6 +75,7 @@ class TextEngine:
         self.conversation: list[ChatCompletionMessageParam] = list()
         raw_tools = t.cast(list[dict[str, object]], OmegaConf.to_object(self.cfg.tools))
         self.tools = self._format_tools(tools=raw_tools)
+        self.runtime = ToolRuntime(registry=tool_module.build_registry(tools=raw_tools))
         self.state: dict[str, object] = dict()
 
     def generate_response(
@@ -322,20 +324,22 @@ class TextEngine:
         """Call non-streamed model-requested tools."""
         needs_followup = False
         for tool_call in tool_calls:
-            if getattr(tool_call, "type") != "function":
-                raise RuntimeError(
-                    f"Unsupported tool call type: {getattr(tool_call, 'type')!r}"
+            if tool_call.type != "function" or tool_call.function is None:
+                response = ToolResult(
+                    status=ToolStatus.INVALID_REQUEST,
+                    message_da="Forespørgslen havde et ugyldigt funktionskald.",
                 )
-            function = getattr(tool_call, "function")
-            name = str(getattr(function, "name"))
-            tool_response = self._call_tool(
-                name=name, arguments_json=str(getattr(function, "arguments"))
-            )
-            needs_followup = needs_followup or bool(tool_response)
+                identifier = str(tool_call.id)
+                name = "unknown"
+            else:
+                name = str(tool_call.function.name)
+                response = self._call_tool(
+                    name=name, arguments_json=str(tool_call.function.arguments)
+                )
+                identifier = str(tool_call.id)
+            needs_followup = needs_followup or response.needs_followup
             self._append_tool_response(
-                identifier=str(getattr(tool_call, "id")),
-                name=name,
-                response=tool_response,
+                identifier=identifier, name=name, response=response
             )
         return needs_followup
 
@@ -348,49 +352,35 @@ class TextEngine:
             tool_response = self._call_tool(
                 name=name, arguments_json=function["arguments"]
             )
-            needs_followup = needs_followup or bool(tool_response)
+            needs_followup = needs_followup or tool_response.needs_followup
             self._append_tool_response(
                 identifier=str(tool_call["id"]), name=name, response=tool_response
             )
         return needs_followup
 
-    def _append_tool_response(self, identifier: str, name: str, response: str) -> None:
-        """Append a tool response to the current model conversation."""
+    def _append_tool_response(
+        self, identifier: str, name: str, response: ToolResult
+    ) -> None:
+        """Append a structured tool response to the model conversation."""
+        content = (
+            json.dumps({name: response.legacy_message}, ensure_ascii=False)
+            if response.legacy_message is not None
+            else response.to_json()
+        )
         self.conversation.append(
-            dict(
-                role="tool",
-                tool_call_id=identifier,
-                content=json.dumps({name: response}, ensure_ascii=False),
-            )
+            dict(role="tool", tool_call_id=identifier, content=content)
         )
 
-    def _call_tool(self, name: str, arguments_json: str) -> str:
-        """Call one model-requested tool and update the engine state."""
-        cancel_event = self.state.get("cancel_event")
-        if isinstance(cancel_event, threading.Event) and cancel_event.is_set():
-            logger.info(f"Skipping cancelled tool call {name!r}.")
-            return ""
-
-        parsed_arguments = json.loads(arguments_json)
-        if not isinstance(parsed_arguments, dict):
-            message = f"Tool arguments must be an object, got {parsed_arguments!r}"
-            raise TypeError(message)
-        arguments = {key: value for key, value in parsed_arguments.items() if key != ""}
-        logger.info(f"Using the tool {name!r} with parameters {arguments!r}...")
-
+    def _call_tool(self, name: str, arguments_json: str) -> ToolResult:
+        """Parse, validate, and invoke one model-requested tool exactly once."""
         try:
-            tool_response, state_updates = getattr(tool_module, name)(
-                state=self.state, **arguments
-            )
-        except TypeError as error:
-            logger.error(f"Error calling tool {name!r}: {error}")
-            logger.info(f"Trying to use the tool {name!r} without arguments...")
-            tool_response, state_updates = getattr(tool_module, name)(state=self.state)
-        self.state.update(state_updates)
-
-        if tool_response:
-            logger.info(f"Tool {name!r} response: {tool_response!r}")
-        return tool_response
+            arguments: object = json.loads(arguments_json)
+        except json.JSONDecodeError, TypeError:
+            arguments = None
+        cancel_event = self.state.get("cancel_event")
+        event = cancel_event if isinstance(cancel_event, threading.Event) else None
+        context = ToolContext(state=self.state, cancel_event=event)
+        return self.runtime.invoke(name=name, arguments=arguments, context=context)
 
     def _clean_response(self, text: str) -> str:
         """Prepare response text for speech synthesis."""
@@ -405,6 +395,7 @@ class TextEngine:
     @staticmethod
     def _format_tools(tools: list[dict[str, object]]) -> list[ChatCompletionToolParam]:
         """Convert Responses API function schemas to Chat Completions schemas."""
+        allowed_names = tool_module.MODEL_TOOL_NAMES | {"lookup"}
         return [
             t.cast(
                 ChatCompletionToolParam,
@@ -416,4 +407,5 @@ class TextEngine:
                 },
             )
             for tool in tools
+            if tool.get("name") in allowed_names
         ]
