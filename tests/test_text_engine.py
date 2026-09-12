@@ -2,6 +2,7 @@
 
 import collections.abc as c
 import datetime as dt
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -49,6 +50,36 @@ def test_text_engine_uses_melious_chat_completions(
             "parameters": {"type": "object", "properties": {}},
         },
     }
+
+
+def test_text_engine_logs_only_safe_response_metadata(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Prompt and generated response contents never enter operational logs."""
+    client = MagicMock()
+    message = MagicMock(content="generated-secret", tool_calls=None)
+    message.model_dump.return_value = {
+        "role": "assistant",
+        "content": "generated-secret",
+    }
+    client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=message)]
+    )
+    monkeypatch.setattr(text_engine.openai, "OpenAI", MagicMock(return_value=client))
+    monkeypatch.setenv("MELIOUS_API_KEY", "test-key")
+    engine = text_engine.TextEngine(cfg=_config())
+
+    with caplog.at_level(logging.INFO):
+        engine.generate_response(
+            prompt="prompt-secret",
+            last_response_time=dt.datetime(year=1900, month=1, day=1),
+            current_response_time=dt.datetime.now(),
+        )
+
+    assert "prompt-secret" not in caplog.text
+    assert "generated-secret" not in caplog.text
+    assert "prompt_length=" in caplog.text
+    assert "text_length=" in caplog.text
 
 
 def test_text_engine_preserves_refusals(monkeypatch: pytest.MonkeyPatch) -> None:

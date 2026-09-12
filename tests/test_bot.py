@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from voicebot import bot as bot_module
+from voicebot.speech_synthesis import PlaybackOutcome
 from voicebot.text_engine import TurnAction, TurnResult
 
 
@@ -59,6 +60,43 @@ def test_response_worker_speaks_streamed_segments(
             text="Anden sætning.", synthesiser=voicebot.synthesiser, cancel_event=cancel
         ),
     ]
+
+
+def test_reminder_requires_complete_playback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancelled reminder playback remains available for a later retry."""
+    voicebot = bot_module.VoiceBot.__new__(bot_module.VoiceBot)
+    voicebot.synthesiser = MagicMock()
+    notification = type("Notification", (), {"payload": {"message": "Påmindelse"}})()
+    cancel_event = threading.Event()
+    monkeypatch.setattr(
+        bot_module,
+        "synthesise_speech",
+        MagicMock(return_value=PlaybackOutcome.CANCELLED),
+    )
+
+    outcome = voicebot._deliver_notification(notification, cancel_event)
+
+    assert outcome == bot_module.DeliveryOutcome.retry()
+
+
+def test_timer_alarm_still_runs_through_bot_synthesiser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timer alarms remain automatic and expose their playback outcome."""
+    voicebot = bot_module.VoiceBot.__new__(bot_module.VoiceBot)
+    voicebot.synthesiser = MagicMock()
+    voicebot._timer_alarm_events = {}
+    voicebot._timer_alarm_lock = threading.Lock()
+    monkeypatch.setattr(
+        bot_module,
+        "synthesise_speech",
+        MagicMock(return_value=PlaybackOutcome.COMPLETE),
+    )
+    timer = type("Timer", (), {"name": "ovn"})()
+
+    voicebot._deliver_timer_alarm(timer)
+
+    assert voicebot._timer_alarm_events == {}
 
 
 def test_response_worker_propagates_failure_state() -> None:

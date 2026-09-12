@@ -150,7 +150,7 @@ class NotificationDispatcher:
             if dismissed:
                 self.dismiss(notification)
             else:
-                logger.exception("Notification callback failed id=%s", notification.id)
+                logger.error("Notification callback failed id=%s", notification.id)
         finally:
             with self._lock:
                 self._active.pop(notification.id, None)
@@ -175,9 +175,7 @@ def _outcome(result: object, *, dismissed: bool) -> DeliveryOutcome:
         return result
     if isinstance(result, DeliveryStatus):
         return DeliveryOutcome(result)
-    if result is False:
-        return DeliveryOutcome.retry()
-    return DeliveryOutcome.delivered()
+    return DeliveryOutcome.retry()
 
 
 __all__ = [

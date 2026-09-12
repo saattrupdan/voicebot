@@ -1,5 +1,6 @@
 """Generation of Danish speech."""
 
+import enum
 import io
 import logging
 import threading
@@ -15,6 +16,14 @@ logger = logging.getLogger(__name__)
 PCM_SAMPLE_RATE = 24_000
 PCM_CHANNELS = 1
 PCM_CHUNK_BYTES = 4096
+
+
+class PlaybackOutcome(enum.StrEnum):
+    """Outcome of one synthesis and playback attempt."""
+
+    COMPLETE = "complete"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class SpeechSynthesiser:
@@ -57,7 +66,7 @@ class SpeechSynthesiser:
 
     def synthesise(
         self, text: str, cancel_event: threading.Event | None = None
-    ) -> None:
+    ) -> PlaybackOutcome:
         """Generate and play speech.
 
         Args:
@@ -67,16 +76,24 @@ class SpeechSynthesiser:
                 Shared response-cancellation event. Defaults to None.
         """
         if cancel_event is not None and cancel_event.is_set():
-            return
+            return PlaybackOutcome.CANCELLED
 
         local_cancel = threading.Event()
         with self._serial_lock:
             with self._state_lock:
                 self._active_cancel = local_cancel
             try:
-                self._synthesise_streaming(
-                    text=text, local_cancel=local_cancel, cancel_event=cancel_event
-                )
+                try:
+                    return self._synthesise_streaming(
+                        text=text, local_cancel=local_cancel, cancel_event=cancel_event
+                    )
+                except Exception:
+                    if self._is_cancelled(
+                        local_cancel=local_cancel, cancel_event=cancel_event
+                    ):
+                        return PlaybackOutcome.CANCELLED
+                    logger.error("Speech synthesis failed during playback")
+                    return PlaybackOutcome.FAILED
             finally:
                 self._playing.clear()
                 with self._state_lock:
@@ -100,7 +117,7 @@ class SpeechSynthesiser:
         text: str,
         local_cancel: threading.Event,
         cancel_event: threading.Event | None,
-    ) -> None:
+    ) -> PlaybackOutcome:
         """Stream raw Plapre PCM, with a WAV fallback before playback starts."""
         emitted_audio = False
         try:
@@ -121,7 +138,7 @@ class SpeechSynthesiser:
                         if self._is_cancelled(
                             local_cancel=local_cancel, cancel_event=cancel_event
                         ):
-                            break
+                            return PlaybackOutcome.CANCELLED
                         audio = remainder + chunk
                         complete_bytes = len(audio) - len(audio) % 2
                         remainder = audio[complete_bytes:]
@@ -142,31 +159,33 @@ class SpeechSynthesiser:
                 local_cancel=local_cancel, cancel_event=cancel_event
             )
             if cancelled:
-                return
+                return PlaybackOutcome.CANCELLED
             if emitted_audio:
-                logger.error(f"Streaming speech failed after playback began: {error}")
-                return
+                logger.error("Streaming speech failed after playback began")
+                return PlaybackOutcome.FAILED
             if not isinstance(error, (AttributeError, TypeError, openai.APIError)):
-                raise
-            logger.warning(
-                f"Streaming speech unavailable, falling back to WAV: {error}"
-            )
-            self._synthesise_wav(
+                return PlaybackOutcome.FAILED
+            logger.warning("Streaming speech unavailable; falling back to WAV")
+            return self._synthesise_wav(
                 text=text, local_cancel=local_cancel, cancel_event=cancel_event
             )
+
+        if self._is_cancelled(local_cancel=local_cancel, cancel_event=cancel_event):
+            return PlaybackOutcome.CANCELLED
+        return PlaybackOutcome.COMPLETE
 
     def _synthesise_wav(
         self,
         text: str,
         local_cancel: threading.Event,
         cancel_event: threading.Event | None,
-    ) -> None:
+    ) -> PlaybackOutcome:
         """Generate a complete WAV response and play it in cancellable chunks."""
         response = self.client.audio.speech.create(
             model=self.model, input=text, voice=self.voice, response_format="wav"
         )
         if self._is_cancelled(local_cancel=local_cancel, cancel_event=cancel_event):
-            return
+            return PlaybackOutcome.CANCELLED
 
         with wave.open(io.BytesIO(response.content), "rb") as wav_file:
             if wav_file.getsampwidth() != 2:
@@ -197,6 +216,10 @@ class SpeechSynthesiser:
                     self._close_resource(resource=output, method="stop")
                 self._close_resource(resource=output, method="close")
 
+        if self._is_cancelled(local_cancel=local_cancel, cancel_event=cancel_event):
+            return PlaybackOutcome.CANCELLED
+        return PlaybackOutcome.COMPLETE
+
     @staticmethod
     def _is_cancelled(
         local_cancel: threading.Event, cancel_event: threading.Event | None
@@ -215,15 +238,17 @@ class SpeechSynthesiser:
         if callable(operation):
             try:
                 operation()
-            except Exception as error:
-                logger.debug(f"Could not {method} active speech resource: {error}")
+            except Exception:
+                logger.debug(
+                    "Could not operate on active speech resource method=%s", method
+                )
 
 
 def synthesise_speech(
     text: str,
     synthesiser: SpeechSynthesiser | None,
     cancel_event: threading.Event | None = None,
-) -> None:
+) -> PlaybackOutcome:
     """Synthesise and play speech.
 
     Args:
@@ -234,8 +259,9 @@ def synthesise_speech(
         cancel_event (optional):
             Shared response-cancellation event. Defaults to None.
     """
-    if synthesiser is not None:
-        synthesiser.synthesise(text=text, cancel_event=cancel_event)
+    if synthesiser is None:
+        return PlaybackOutcome.COMPLETE
+    return synthesiser.synthesise(text=text, cancel_event=cancel_event)
 
 
 def play_sound(path: str | Path) -> None:
