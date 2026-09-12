@@ -371,15 +371,30 @@ class SpotifyProvider:
             if device_error is not None:
                 return self._with_operation(device_error, context)
             assert device is not None
-            if volume_percent > 80:
+            if volume_percent > 80 and not context.state.get("_resume_confirmation"):
+                manager = context.state.get("confirmation_manager")
+                request = getattr(manager, "request", None)
+                resolved = {
+                    "volume_percent": volume_percent,
+                    "device_name": self._device_label(device),
+                    "action": "spotify_set_volume",
+                }
+                if callable(request) and not request(
+                    context,
+                    action="spotify_set_volume",
+                    arguments={
+                        "profile_name": profile_name,
+                        "volume_percent": volume_percent,
+                        "device_name": self._device_label(device),
+                    },
+                    resolved=resolved,
+                ):
+                    pass
                 return self._with_operation(
                     ToolResult(
                         status=ToolStatus.CONFIRMATION_REQUIRED,
                         message_da="Bekræft lydstyrke over 80 procent.",
-                        data={
-                            "volume_percent": volume_percent,
-                            "device": self._device_label(device),
-                        },
+                        data=t.cast(dict[str, object], resolved),
                     ),
                     context,
                 )

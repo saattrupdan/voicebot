@@ -301,7 +301,11 @@ class ShoppingTools:
             "item_name": item_name,
             "action": "remove_shopping_item",
         }
-        context.state["_confirmation_arguments"] = typed_arguments
+        context.state["_confirmation_arguments"] = {
+            "profile_name": resolved["profile_name"],
+            "list_name": resolved["list_name"],
+            "item_name": resolved["item_name"],
+        }
         if not self._confirmed(context=context, resolved=resolved):
             return ToolResult(
                 status=ToolStatus.CONFIRMATION_REQUIRED,

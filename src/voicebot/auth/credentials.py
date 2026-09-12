@@ -224,6 +224,8 @@ class CredentialStore:
         *,
         refresh_skew: dt.timedelta = dt.timedelta(seconds=60),
         clock: c.Callable[[], dt.datetime] | None = None,
+        status_callback: c.Callable[[ProviderAccount, ConnectionStatus], None]
+        | None = None,
     ) -> None:
         """Initialise credential persistence and the process-local token cache.
 
@@ -238,6 +240,7 @@ class CredentialStore:
         self._backend = backend if backend is not None else KeyringCredentialBackend()
         self._refresh_skew = refresh_skew
         self._clock = clock or _utc_now
+        self._status_callback = status_callback
         self._cache: dict[CredentialReference, _CachedToken] = {}
         self._accounts: dict[CredentialReference, ProviderAccount] = {}
         self._locks: dict[CredentialReference, threading.Lock] = {}
@@ -426,9 +429,17 @@ class CredentialStore:
         with self._lock:
             account = self._accounts.get(credential_ref)
             if account is not None:
-                self._accounts[credential_ref] = dataclasses.replace(
-                    account, status=status
-                )
+                updated = dataclasses.replace(account, status=status)
+                self._accounts[credential_ref] = updated
+            else:
+                updated = None
+        if updated is not None and self._status_callback is not None:
+            try:
+                self._status_callback(updated, status)
+            except Exception:
+                # Persistence must not turn a safe credential failure into a secret
+                # bearing exception from the keyring layer.
+                pass
 
 
 class _KeyringAdapter:

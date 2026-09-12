@@ -23,10 +23,16 @@ Run the setup CLI without entering credentials on the command line:
 uv run python src/scripts/integrations.py status
 uv run python src/scripts/integrations.py login spotify --profile dan
 uv run python src/scripts/integrations.py disconnect spotify --profile dan
+
+# Optional: override the shared SQLite location for smoke tests or another installation
+VOICEBOT_DATABASE_PATH=/path/to/voicebot.sqlite \\
+  uv run python src/scripts/integrations.py status
 ```
 
-Status output contains only provider, profile, and connection state. Disconnect revokes
-where supported and removes the local refresh credential. Refresh credentials live in
+Status output contains only provider, profile, and connection state. Login creates or
+rehydrates the profile and persists account metadata in the configured SQLite database;
+the bot and this CLI therefore use the same state. Disconnect revokes where supported,
+erases the keyring secret, and records disconnected status. Refresh credentials live in
 the operating-system keyring by default; use `storage.credential_backend: memory` only
 for disposable tests. The database stores opaque credential references and aliases, not
 keys or tokens. Back up the database before migrations, but never copy `.env` or a
@@ -57,9 +63,13 @@ reported instead of guessed.
 
 Listonic support is an unofficial, contract-pinned integration. It is disabled unless
 both `integrations.listonic.enabled` and
-`integrations.listonic.allow_unofficial` are true. Login uses an isolated browser
-session and never asks the bot for a Listonic password. Keep it disabled unless the
-operational risk of an undocumented API is acceptable; contract drift fails closed.
+`integrations.listonic.allow_unofficial` are true. Login uses a disposable isolated
+browser helper and never asks the bot for a Listonic password. Install `agent-browser`
+or set `LISTONIC_BROWSER_HELPER` before Listonic login; the command reports a local setup
+error when neither is available. The helper must expose the authenticated browser state;
+refresh is deliberately fail-closed because Listonic has no verified refresh contract.
+Keep it disabled unless the operational risk of an undocumented API is acceptable;
+contract drift fails closed.
 Removing an individual item requires a local yes/no confirmation. List creation,
 sharing, whole-list deletion, and other unsupported operations remain unavailable.
 

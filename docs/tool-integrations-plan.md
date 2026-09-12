@@ -873,7 +873,23 @@ Rollback rules:
 ## Implemented defaults
 
 The end-to-end assembly uses these defaults (and the configuration file is the source
-of truth for local routing):
+of truth for local routing). The setup CLI and bot resolve the same SQLite path (the
+`VOICEBOT_DATABASE_PATH` environment override is available for non-Hydra smoke runs),
+and both use the OS keyring credential backend:
+
+- Login persists profiles, provider-account metadata, aliases, scopes, status, and opaque
+  credential references. A new process rehydrates that metadata before serving tools.
+- Tool calls use their provider call ID as a stable idempotency key. A completed result
+  is reused; an uncertain started operation is never replayed automatically.
+- Destructive Listonic removal and Spotify volume above 80 percent use a two-minute,
+  device-bound confirmation. The resolved arguments, origin device, and expiry are
+  persisted; changed, expired, or cross-device confirmations are rejected.
+- Reminder playback is acknowledged only after successful TTS or explicit dismissal;
+  playback, network, and cancellation failures remain recoverable.
+- Listonic onboarding requires an operator-installed isolated browser helper. The helper
+  never receives a password from the bot and is destroyed after token import. Listonic
+  refresh has no verified contract and therefore fails closed rather than guessing an
+  endpoint.
 
 - [x] `Europe/Copenhagen` is the default timezone.
 - [x] Cooking timers are non-persistent and limited to 24 hours.
@@ -890,8 +906,11 @@ of truth for local routing):
 - [x] List creation, sharing, and whole-list deletion remain unavailable.
 - [x] Removing an individual Listonic item requires local confirmation.
 - [x] Listonic's unofficial API requires explicit operator acknowledgement.
-- [x] Headless deployments use memory-only credentials unless an OS keyring is available;
-      encrypted-file credential storage is not silently enabled.
+- [x] Headless deployments use the OS keyring when available; encrypted-file credential
+      storage is not silently enabled. Disposable tests may explicitly select memory-only
+      credentials.
+- [x] Existing `get_weather`, `get_news`, `search_web`, and `meow` tools remain registered
+      with strict schemas alongside the integration tools.
 
 ## Definition of done
 

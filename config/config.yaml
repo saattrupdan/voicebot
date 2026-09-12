@@ -299,6 +299,44 @@ tools:
         list_name: {type: [string, 'null']}
         item_name: {type: string}
       required: [profile_name, list_name, item_name]
+  - type: function
+    strict: true
+    name: get_weather
+    description: Get the current weather for a location.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        location: {type: string}
+      required: [location]
+  - type: function
+    strict: true
+    name: get_news
+    description: Read the latest news.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties: {}
+      required: []
+  - type: function
+    strict: true
+    name: search_web
+    description: Search the web for information.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        keywords: {type: string}
+      required: [keywords]
+  - type: function
+    strict: true
+    name: meow
+    description: Make a cat sound.
+    parameters:
+      type: object
+      additionalProperties: false
+      properties: {}
+      required: []
 
 # Local routing configuration contains no credentials.
 locale: da-DK
