@@ -794,6 +794,18 @@ class OperationRepository:
         return self.update(operation_id, "failed", error=error, now=now)
 
 
+def _expired_confirmation_result(operation_id: str) -> dict[str, object]:
+    """Build the safe, durable result for an expired confirmation."""
+    return {
+        "status": "invalid_request",
+        "operation_id": operation_id,
+        "message_da": "Bekræftelsen er udløbet.",
+        "data": None,
+        "candidates": [],
+        "retryable": False,
+    }
+
+
 class ConfirmationRepository:
     """Store confirmations until a runtime accepts or rejects them."""
 
@@ -879,29 +891,54 @@ class ConfirmationRepository:
     def resolve(
         self, confirmation_id: str, *, accepted: bool, now: dt.datetime | None = None
     ) -> PendingConfirmation | None:
-        """Atomically accept or reject a still-pending confirmation."""
+        """Atomically resolve a pending confirmation or expire it at the boundary."""
         current = to_utc(now or utc_now())
+        current_timestamp = timestamp(current)
         status = "confirmed" if accepted else "rejected"
         with self.database.transaction(immediate=True) as connection:
-            cursor = connection.execute(
-                "UPDATE pending_confirmations SET status = ?, resolved_at = ? "
-                "WHERE id = ? AND status = 'pending' AND expires_at > ?",
-                (status, timestamp(current), confirmation_id, timestamp(current)),
-            )
-            if cursor.rowcount != 1:
+            row = connection.execute(
+                "SELECT * FROM pending_confirmations WHERE id = ?", (confirmation_id,)
+            ).fetchone()
+            if row is None or row["status"] != "pending":
                 return None
-        return self.get(confirmation_id, now=current)
+
+            if str(row["expires_at"]) <= current_timestamp:
+                connection.execute(
+                    "UPDATE pending_confirmations SET status = 'expired', "
+                    "resolved_at = ? WHERE id = ? AND status = 'pending'",
+                    (current_timestamp, confirmation_id),
+                )
+                operation_id = row["operation_id"]
+                if operation_id is not None:
+                    connection.execute(
+                        "UPDATE operations SET status = 'failed', result_json = ?, "
+                        "error = ?, updated_at = ? WHERE id = ? "
+                        "AND status = 'pending_confirmation'",
+                        (
+                            json_object(
+                                _expired_confirmation_result(str(operation_id))
+                            ),
+                            "confirmation expired",
+                            current_timestamp,
+                            operation_id,
+                        ),
+                    )
+            else:
+                connection.execute(
+                    "UPDATE pending_confirmations SET status = ?, resolved_at = ? "
+                    "WHERE id = ? AND status = 'pending'",
+                    (status, current_timestamp, confirmation_id),
+                )
+
+            resolved_row = connection.execute(
+                "SELECT * FROM pending_confirmations WHERE id = ?", (confirmation_id,)
+            ).fetchone()
+            assert resolved_row is not None
+            return _confirmation(resolved_row)
 
     def expire(self, *, now: dt.datetime | None = None) -> int:
         """Mark expired confirmations and fail their pending operations atomically."""
         current = to_utc(now or utc_now())
-        expired_result = {
-            "status": "invalid_request",
-            "message_da": "Bekræftelsen er udløbet.",
-            "data": None,
-            "candidates": [],
-            "retryable": False,
-        }
         with self.database.transaction(immediate=True) as connection:
             operation_rows = connection.execute(
                 "SELECT operation_id FROM pending_confirmations "
@@ -916,13 +953,12 @@ class ConfirmationRepository:
             )
             for row in operation_rows:
                 operation_id = row[0]
-                result = {**expired_result, "operation_id": operation_id}
                 connection.execute(
                     "UPDATE operations SET status = 'failed', result_json = ?, "
                     "error = ?, updated_at = ? WHERE id = ? "
                     "AND status = 'pending_confirmation'",
                     (
-                        json_object(result),
+                        json_object(_expired_confirmation_result(str(operation_id))),
                         "confirmation expired",
                         timestamp(current),
                         operation_id,

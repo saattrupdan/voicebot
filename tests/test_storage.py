@@ -295,6 +295,49 @@ def test_reminder_queue_recovers_after_worker_restart() -> None:
         assert delivered.status == "delivered"
 
 
+def test_confirmation_resolution_expires_atomically_after_initial_get() -> None:
+    """A pending read cannot allow resolution after its expiry boundary."""
+    with Storage() as storage:
+        profile = storage.profiles.create("Dan", now=NOW)
+        operation = storage.operations.start(
+            "request-1", "delete_item", profile_id=profile.id, now=NOW
+        )
+        storage.operations.update(operation.id, "pending_confirmation", now=NOW)
+        expires_at = NOW + dt.timedelta(seconds=5)
+        confirmation = storage.confirmations.create(
+            profile.id,
+            "delete_item",
+            {"item": "milk"},
+            expires_at,
+            operation_id=operation.id,
+            now=NOW,
+        )
+
+        initially_pending = storage.confirmations.get(confirmation.id, now=NOW)
+        assert initially_pending is not None
+        assert initially_pending.status == "pending"
+
+        resolved = storage.confirmations.resolve(
+            confirmation.id, accepted=True, now=expires_at + dt.timedelta(seconds=1)
+        )
+
+        assert resolved is not None
+        assert resolved.status == "expired"
+        assert resolved.resolved_at == expires_at + dt.timedelta(seconds=1)
+        failed = storage.operations.get(operation.id)
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.error == "confirmation expired"
+        assert failed.result == {
+            "status": "invalid_request",
+            "operation_id": operation.id,
+            "message_da": "Bekræftelsen er udløbet.",
+            "data": None,
+            "candidates": [],
+            "retryable": False,
+        }
+
+
 def test_operation_confirmation_lease_and_audit() -> None:
     """The non-scheduler records survive normal runtime state transitions."""
     with Storage() as storage:
