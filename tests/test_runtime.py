@@ -238,6 +238,9 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
         assert operation is not None and operation.status == "pending_confirmation"
         manager = t.cast(ConfirmationManager, runtime.state["confirmation_manager"])
         assert manager.resolve(True, device_id="device-b").status is ToolStatus.CONFLICT
+        still_pending = runtime.storage.operations.get("volume-1")
+        assert still_pending is not None
+        assert still_pending.status == "pending_confirmation"
         accepted = manager.resolve(True, device_id="device-a")
         assert accepted.status is ToolStatus.OK
         assert spotify_mutations == 1
@@ -270,7 +273,20 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
             ),
         )
         assert pending.status is ToolStatus.CONFIRMATION_REQUIRED
+        replay = runtime.registry.invoke(
+            "spotify_set_volume",
+            volume_arguments,
+            ToolContext(
+                runtime.state, operation_id="volume-expired", device_id="device-a"
+            ),
+        )
+        assert replay.status is ToolStatus.INVALID_REQUEST
         assert manager.resolve(True, device_id="device-a").status is ToolStatus.CONFLICT
+        expired_operation = runtime.storage.operations.get("volume-expired")
+        assert expired_operation is not None
+        assert expired_operation.status == "failed"
+        assert expired_operation.result is not None
+        assert expired_operation.result["status"] == "invalid_request"
         assert spotify_mutations == 1
         manager.expiry = dt.timedelta(minutes=2)
 
@@ -305,6 +321,27 @@ def test_documented_safety_configuration_matches_defaults() -> None:
     assert "can repeat a reminder" in readme
     assert "not automatically\n  mentioned" in plan
     assert "uv run src/scripts/integrations.py status" in readme
+
+
+def test_shipped_config_builds_and_stops_without_hydra(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shipped config can assemble its runtime outside a Hydra command."""
+    config_path = pathlib.Path(__file__).parents[1] / "config" / "config.yaml"
+    config = t.cast(DictConfig, OmegaConf.load(config_path))
+    config.storage.credential_backend = "memory"
+    monkeypatch.chdir(tmp_path)
+
+    runtime = build_integration_runtime(config)
+    runtime.start()
+    try:
+        assert runtime.scheduler.is_running
+        assert runtime._worker is not None
+        assert runtime._worker.is_alive()
+    finally:
+        runtime.stop()
+    assert not runtime.scheduler.is_running
+    assert (tmp_path / ".local/state/voicebot.sqlite").exists()
 
 
 def test_runtime_starts_and_stops_one_scheduler_worker(tmp_path: pathlib.Path) -> None:

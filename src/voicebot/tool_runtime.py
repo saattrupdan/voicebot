@@ -281,6 +281,7 @@ class ToolRuntime:
         operations = _operations(context) if spec.mutates else None
         operation = None
         if operations is not None:
+            _expire_confirmations(context)
             key = f"{name}:{operation_id}"
             profile_id = context.state.get("profile_id")
             profiles = getattr(context.state.get("storage"), "profiles", None)
@@ -367,6 +368,15 @@ class ToolRuntime:
             else:
                 operations.update(operation.id, "failed", result=record)
         return normalised
+
+
+def _expire_confirmations(context: ToolContext) -> None:
+    """Resolve expired confirmations before recovering a mutation operation."""
+    storage = context.state.get("storage")
+    confirmations = getattr(storage, "confirmations", None)
+    expire = getattr(confirmations, "expire", None)
+    if callable(expire):
+        expire()
 
 
 def _operations(context: ToolContext) -> OperationRepository | None:

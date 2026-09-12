@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 
 from omegaconf import OmegaConf
 
@@ -46,19 +47,24 @@ class BrowserHelperUnavailable(CredentialError):
 class _IsolatedBrowserSession:
     """Small, secret-free adapter around an operator-installed browser helper."""
 
+    _COMMAND_TIMEOUT = 30.0
+    _OPEN_TIMEOUT = 120.0
+    _EVAL_SCRIPT = (
+        "({localStorage:Object.fromEntries(Object.entries(localStorage)),"
+        "sessionStorage:Object.fromEntries(Object.entries(sessionStorage))})"
+    )
+
     def __init__(self, helper: str) -> None:
         self.helper = helper
         self.profile = pathlib.Path(tempfile.mkdtemp(prefix="voicebot-listonic-"))
+        self.session = f"voicebot-listonic-{uuid.uuid4().hex}"
 
     def open_login(self, url: str) -> None:
-        subprocess.run(
-            [self.helper, "--profile", str(self.profile), "open", url],
-            check=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        completed = self._run(
+            "--headed", "open", url, "--json", timeout=self._OPEN_TIMEOUT
         )
-        # The prompt is only a synchronization point; the password stays in the
+        _decode_browser_json(completed.stdout)
+        # The prompt is only a synchronisation point; the password stays in the
         # browser and is never read by this process.
         try:
             input("Complete Listonic login in the isolated browser, then press Enter: ")
@@ -68,35 +74,15 @@ class _IsolatedBrowserSession:
             ) from error
 
     def export_tokens(self) -> object:
-        completed = subprocess.run(
-            [
-                self.helper,
-                "--profile",
-                str(self.profile),
-                "eval",
-                "JSON.stringify({localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))})",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        exported: object = json.loads(completed.stdout)
+        completed = self._run("eval", self._EVAL_SCRIPT, "--json")
+        exported = _decode_browser_json(completed.stdout)
         try:
-            cookies = subprocess.run(
-                [
-                    self.helper,
-                    "--profile",
-                    str(self.profile),
-                    "cookies",
-                    "get",
-                    "--json",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            cookie_state: object = json.loads(cookies.stdout)
-        except OSError, subprocess.SubprocessError, ValueError:
+            cookies = self._run("cookies", "get", "--json")
+            cookie_state = _decode_browser_json(cookies.stdout)
+        except BrowserHelperUnavailable:
+            # Cookies are supplementary; local/session storage is the source of
+            # truth for Listonic tokens and remains importable if this command is
+            # unavailable in an older helper.
             cookie_state = {}
         if isinstance(exported, dict) and isinstance(cookie_state, dict):
             return {**exported, "cookies": cookie_state}
@@ -104,15 +90,77 @@ class _IsolatedBrowserSession:
 
     def destroy(self) -> None:
         try:
-            subprocess.run(
-                [self.helper, "--profile", str(self.profile), "close"],
-                check=False,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            self._run("close", check=False)
+        except BrowserHelperUnavailable:
+            # Cleanup must not hide the onboarding error or leave the temporary
+            # profile behind when the helper has disappeared.
+            pass
         finally:
             shutil.rmtree(self.profile, ignore_errors=True)
+
+    def _run(
+        self, *arguments: str, check: bool = True, timeout: float = _COMMAND_TIMEOUT
+    ) -> subprocess.CompletedProcess[str]:
+        command = [
+            self.helper,
+            "--session",
+            self.session,
+            "--profile",
+            str(self.profile),
+            *arguments,
+        ]
+        try:
+            return subprocess.run(
+                command, check=check, capture_output=True, text=True, timeout=timeout
+            )
+        except FileNotFoundError:
+            raise BrowserHelperUnavailable(
+                "agent-browser helper was not found; install it or set "
+                "LISTONIC_BROWSER_HELPER"
+            ) from None
+        except PermissionError:
+            raise BrowserHelperUnavailable(
+                "agent-browser helper is not executable"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise BrowserHelperUnavailable(
+                "agent-browser timed out; finish loading the login page and try again"
+            ) from None
+        except subprocess.SubprocessError:
+            raise BrowserHelperUnavailable("agent-browser command failed") from None
+        except OSError:
+            message = "could not start agent-browser helper"
+            raise BrowserHelperUnavailable(message) from None
+
+
+def _decode_browser_json(output: str) -> object:
+    """Decode an agent-browser JSON response without exposing its payload on error."""
+    try:
+        value: object = json.loads(output)
+    except TypeError, ValueError:
+        raise BrowserHelperUnavailable(
+            "agent-browser returned invalid JSON; try updating the helper"
+        ) from None
+
+    if isinstance(value, dict) and value.get("success") is False:
+        raise BrowserHelperUnavailable("agent-browser reported a browser error")
+    if isinstance(value, dict) and value.get("success") is True:
+        data = value.get("data")
+        if isinstance(data, dict) and "result" in data:
+            return _decode_nested_browser_value(data["result"])
+        return data
+    return _decode_nested_browser_value(value)
+
+
+def _decode_nested_browser_value(value: object) -> object:
+    """Decode older helpers which serialise a JavaScript object as a string."""
+    if isinstance(value, str):
+        try:
+            decoded: object = json.loads(value)
+        except ValueError:
+            return value
+        return decoded
+    return value
 
 
 def _isolated_browser_factory() -> IsolatedBrowserSession:

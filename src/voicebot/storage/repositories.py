@@ -893,14 +893,41 @@ class ConfirmationRepository:
         return self.get(confirmation_id, now=current)
 
     def expire(self, *, now: dt.datetime | None = None) -> int:
-        """Mark all expired pending confirmations."""
+        """Mark expired confirmations and fail their pending operations atomically."""
         current = to_utc(now or utc_now())
+        expired_result = {
+            "status": "invalid_request",
+            "message_da": "Bekræftelsen er udløbet.",
+            "data": None,
+            "candidates": [],
+            "retryable": False,
+        }
         with self.database.transaction(immediate=True) as connection:
+            operation_rows = connection.execute(
+                "SELECT operation_id FROM pending_confirmations "
+                "WHERE status = 'pending' AND expires_at <= ? "
+                "AND operation_id IS NOT NULL",
+                (timestamp(current),),
+            ).fetchall()
             cursor = connection.execute(
                 "UPDATE pending_confirmations SET status = 'expired', resolved_at = ? "
                 "WHERE status = 'pending' AND expires_at <= ?",
                 (timestamp(current), timestamp(current)),
             )
+            for row in operation_rows:
+                operation_id = row[0]
+                result = {**expired_result, "operation_id": operation_id}
+                connection.execute(
+                    "UPDATE operations SET status = 'failed', result_json = ?, "
+                    "error = ?, updated_at = ? WHERE id = ? "
+                    "AND status = 'pending_confirmation'",
+                    (
+                        json_object(result),
+                        "confirmation expired",
+                        timestamp(current),
+                        operation_id,
+                    ),
+                )
         return cursor.rowcount
 
 
