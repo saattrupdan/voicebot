@@ -363,8 +363,11 @@ storage:
   master_key_env: VOICEBOT_MASTER_KEY
 integrations:
   google_calendar:
-    enabled: false
-    calendar_aliases: {}
+    enabled: true
+    backend: gws
+    calendar_aliases:
+      dan:
+        min kalender: primary
   spotify:
     enabled: false
     default_profile: dan

@@ -27,6 +27,34 @@ MAX_INTERVAL = dt.timedelta(days=31)
 MAX_RESULTS = 50
 
 
+class CalendarProvider(t.Protocol):
+    """Structural interface shared by local Calendar backends."""
+
+    def list_events(
+        self,
+        *,
+        credential_ref: str,
+        calendar_id: str,
+        starts_at: dt.datetime,
+        ends_at: dt.datetime,
+        query: str | None = None,
+        max_results: int = MAX_RESULTS,
+        context: ToolContext | None = None,
+    ) -> list[CalendarEvent]:
+        """Return safe events for a bounded interval."""
+
+    def query_freebusy(
+        self,
+        *,
+        credential_ref: str,
+        calendar_ids: c.Sequence[str],
+        starts_at: dt.datetime,
+        ends_at: dt.datetime,
+        context: ToolContext | None = None,
+    ) -> dict[str, list[BusyInterval]]:
+        """Return busy intervals without event details."""
+
+
 class GoogleCalendarError(Exception):
     """Base class for safe Google Calendar provider errors."""
 
@@ -404,6 +432,7 @@ GoogleCalendar = GoogleCalendarProvider
 
 __all__ = [
     "BusyInterval",
+    "CalendarProvider",
     "CALENDAR_API_BASE",
     "CalendarEvent",
     "GOOGLE_CALENDAR_API_BASE",
