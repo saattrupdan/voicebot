@@ -364,6 +364,9 @@ storage:
 integrations:
   google_calendar:
     enabled: true
+    default_profile: dan
+    profile_bindings:
+      dan: gws-local
     calendar_aliases:
       dan:
         min kalender: primary

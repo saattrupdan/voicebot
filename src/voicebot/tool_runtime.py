@@ -17,6 +17,10 @@ from .storage.repositories import OperationRepository, redact
 
 logger = logging.getLogger(__name__)
 
+_UNKNOWN_OUTCOME_MESSAGE = (
+    "Resultatet er uklart; handlingen kan være gennemført og må ikke gentages."
+)
+
 
 class ToolStatus(StrEnum):
     """Statuses that can be returned by a tool."""
@@ -351,10 +355,13 @@ class ToolRuntime:
         safe_message = redact(result.message_da)
         safe_data = redact(result.data) if result.data is not None else None
         safe_candidates = redact(result.candidates)
+        message = safe_message if isinstance(safe_message, str) else ""
+        if result.status is ToolStatus.OUTCOME_UNKNOWN and not message:
+            message = _UNKNOWN_OUTCOME_MESSAGE
         normalised = ToolResult(
             status=result.status,
             operation_id=operation_id,
-            message_da=safe_message if isinstance(safe_message, str) else "",
+            message_da=message,
             data=safe_data if isinstance(safe_data, dict) else None,
             candidates=safe_candidates if isinstance(safe_candidates, list) else [],
             retryable=result.retryable,
@@ -366,6 +373,9 @@ class ToolRuntime:
                 operations.update(operation.id, "pending_confirmation", result=record)
             elif normalised.status is ToolStatus.OK:
                 operations.complete(operation.id, result=record)
+                _remember_committed(context, record)
+            elif normalised.status is ToolStatus.OUTCOME_UNKNOWN:
+                operations.update(operation.id, "failed", result=record)
                 _remember_committed(context, record)
             else:
                 operations.update(operation.id, "failed", result=record)
@@ -437,7 +447,7 @@ def _result_from_record(record: dict[str, object], operation_id: str) -> ToolRes
 
 
 def _remember_committed(context: ToolContext, result: dict[str, object]) -> None:
-    """Keep a completed result available if response history is rolled back."""
+    """Keep a committed or uncertain result if response history is rolled back."""
     committed = context.state.setdefault("committed_operation_results", [])
     if isinstance(committed, list):
         committed.append(result)

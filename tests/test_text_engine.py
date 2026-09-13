@@ -3,6 +3,7 @@
 import collections.abc as c
 import datetime as dt
 import logging
+import pathlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -10,6 +11,8 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from voicebot import text_engine
+from voicebot.storage import Storage
+from voicebot.tool_runtime import ToolResult, ToolRuntime, ToolSpec, ToolStatus
 
 
 def test_text_engine_uses_melious_chat_completions(
@@ -254,6 +257,108 @@ def test_streamed_end_marker_remains_silent(monkeypatch: pytest.MonkeyPatch) -> 
     assert segments == []
 
 
+def test_unknown_mutation_is_preserved_across_cancel_and_fresh_tool_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """An uncertain draft result is shown again without replaying its private args."""
+    client = MagicMock()
+    cancel = text_engine.threading.Event()
+    arguments = (
+        '{"recipients":["private@example.com"],"subject":"Private subject",'
+        '"body":"private draft body"}'
+    )
+    invoked: list[dict[str, object]] = []
+
+    def create_draft(_context: object, values: dict[str, object]) -> ToolResult:
+        invoked.append(values)
+        return ToolResult(
+            status=ToolStatus.OUTCOME_UNKNOWN,
+            message_da="Kladden kan være gemt og må ikke oprettes igen.",
+        )
+
+    runtime = ToolRuntime()
+    runtime.register(
+        ToolSpec(
+            name="drafts.create",
+            description="Create a draft.",
+            parameters={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "recipients": {"type": "array", "items": {"type": "string"}},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["recipients", "subject", "body"],
+            },
+            handler=create_draft,
+            mutates=True,
+            persist_arguments=False,
+        )
+    )
+    first_stream = MagicMock()
+    first_stream.__iter__.return_value = iter(
+        [_chunk(tool_calls=[_tool_call("draft-1", "drafts.create", arguments)])]
+    )
+    second_stream = MagicMock()
+
+    def cancelled_follow_up() -> c.Iterator[SimpleNamespace]:
+        yield _chunk(tool_calls=[_tool_call("draft-2", "drafts.create", arguments)])
+        cancel.set()
+        yield _chunk(content="Dette svar må ikke tales.")
+
+    second_stream.__iter__.return_value = cancelled_follow_up()
+    final_message = MagicMock(
+        content="Jeg gentager ikke kladden.", refusal=None, tool_calls=None
+    )
+    final_message.model_dump.return_value = {
+        "role": "assistant",
+        "content": "Jeg gentager ikke kladden.",
+    }
+    client.chat.completions.create.side_effect = [
+        first_stream,
+        second_stream,
+        SimpleNamespace(choices=[SimpleNamespace(message=final_message)]),
+    ]
+    monkeypatch.setattr(text_engine.openai, "OpenAI", MagicMock(return_value=client))
+    monkeypatch.setenv("MELIOUS_API_KEY", "test-key")
+
+    with Storage(tmp_path / "state.sqlite") as storage:
+        engine = text_engine.TextEngine(
+            cfg=_config(), runtime=runtime, state={"storage": storage}
+        )
+        result = engine.generate_response(
+            prompt="Skriv en privat kladde.",
+            last_response_time=dt.datetime.now(),
+            current_response_time=dt.datetime.now(),
+            on_segment=MagicMock(),
+            cancel_event=cancel,
+        )
+        assert result.action is text_engine.TurnAction.SILENT
+        assert len(invoked) == 1
+
+        cancel.clear()
+        follow_up = engine.generate_response(
+            prompt="Hvad var resultatet?",
+            last_response_time=dt.datetime.now(),
+            current_response_time=dt.datetime.now(),
+        )
+
+    assert follow_up.action is text_engine.TurnAction.RESPOND
+    assert len(invoked) == 1
+    request_messages = client.chat.completions.create.call_args.kwargs["messages"]
+    notice = " ".join(
+        str(message.get("content", ""))
+        for message in request_messages
+        if message.get("role") == "system"
+    )
+    assert "uklart" in notice
+    assert "må ikke gentages" in notice
+    assert "private@example.com" not in notice
+    assert "private subject" not in notice
+    assert "private draft body" not in notice
+
+
 def test_cancelled_stream_rolls_back_turn_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -342,6 +447,13 @@ def _chunk(
     """Create a minimal streamed Chat Completions chunk."""
     delta = SimpleNamespace(content=content, refusal=None, tool_calls=tool_calls)
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+def _tool_call(identifier: str, name: str, arguments: str) -> SimpleNamespace:
+    """Create a minimal streamed function tool call."""
+    return SimpleNamespace(
+        index=0, id=identifier, function=SimpleNamespace(name=name, arguments=arguments)
+    )
 
 
 def _config() -> DictConfig:
