@@ -261,6 +261,15 @@ def build_integration_runtime(
         listonic_config.get("allow_unverified_item_removal", False)
     )
     calendar_config = _mapping(integrations.get("google_calendar", {}))
+    gmail_config = _mapping(integrations.get("gmail", {}))
+    gmail_profiles = _gmail_profiles(gmail_config)
+    configured_gmail_default = gmail_config.get("default_profile")
+    gmail_default_profile = (
+        configured_gmail_default
+        if isinstance(configured_gmail_default, str)
+        and configured_gmail_default in gmail_profiles
+        else None
+    )
     spotify_config = _mapping(integrations.get("spotify", {}))
     list_aliases = _merge_aliases(
         t.cast(dict[str, object], _list_aliases(storage)),
@@ -371,9 +380,13 @@ def build_integration_runtime(
     )
     gmail = GmailToolAdapter(
         gmail_provider,
-        profiles=profile_names,
-        profile_aliases=profile_aliases,
-        default_profile=default_profile,
+        profiles=gmail_profiles,
+        profile_aliases={
+            alias: profile
+            for alias, profile in profile_aliases.items()
+            if profile in gmail_profiles
+        },
+        default_profile=gmail_default_profile,
     )
     specs.extend(
         _gate_specs(
@@ -576,6 +589,16 @@ def _load_accounts(
             )
         result.setdefault(record.provider, {})[profile] = account
     return result
+
+
+def _gmail_profiles(config: c.Mapping[str, object]) -> set[str]:
+    """Return profiles explicitly bound to the sole local Gmail account."""
+    bindings = _mapping(config.get("profile_bindings", {}))
+    return {
+        profile
+        for profile, provider in bindings.items()
+        if isinstance(profile, str) and provider == "gws-local"
+    }
 
 
 def _calendar_bindings(

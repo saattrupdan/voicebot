@@ -14,6 +14,7 @@ from ..providers.gws_gmail import (
     GmailForbidden,
     GmailMessage,
     GmailMessageSummary,
+    GmailOutcomeUnknown,
     GmailRateLimited,
     GmailUnauthenticated,
     GmailUnavailable,
@@ -31,6 +32,8 @@ MAX_SUBJECT = 200
 MAX_DRAFT_BODY = 20_000
 _HEADER_BREAK = re.compile(r"[\r\n]")
 _HANDLE = re.compile(r"^[A-Za-z0-9_-]{16,100}$")
+_LOCAL_PART = re.compile(r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$")
+_DOMAIN_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
 
 class GmailHandleStore:
@@ -333,13 +336,37 @@ def _validate_recipients(value: object) -> list[str]:
         raise ValueError("recipients are invalid")
     result: list[str] = []
     for item in value:
-        if not isinstance(item, str) or len(item) > 320 or _HEADER_BREAK.search(item):
-            raise ValueError("recipients are invalid")
-        item = item.strip()
-        if not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+", item):
+        if not isinstance(item, str) or not _valid_mailbox(item):
             raise ValueError("recipients are invalid")
         result.append(item)
     return result
+
+
+def _valid_mailbox(value: str) -> bool:
+    if (
+        not value
+        or value != value.strip()
+        or len(value) > 254
+        or _HEADER_BREAK.search(value)
+        or value.count("@") != 1
+    ):
+        return False
+    local, domain = value.rsplit("@", 1)
+    if (
+        not 1 <= len(local) <= 64
+        or not _LOCAL_PART.fullmatch(local)
+        or local.startswith(".")
+        or local.endswith(".")
+        or ".." in local
+        or len(domain) > 253
+    ):
+        return False
+    labels = domain.split(".")
+    return (
+        len(labels) >= 2
+        and all(_DOMAIN_LABEL.fullmatch(label) for label in labels)
+        and (labels[-1].isalpha() or labels[-1].casefold().startswith("xn--"))
+    )
 
 
 def _validate_header(value: object, limit: int, name: str) -> str:
@@ -383,6 +410,12 @@ def _error(error: Exception) -> ToolResult:
             ToolStatus.RATE_LIMITED,
             "Gmail har bedt om en pause.",
             True,
+        ),
+        (
+            GmailOutcomeUnknown,
+            ToolStatus.OUTCOME_UNKNOWN,
+            "Kladden kan være gemt og må ikke oprettes igen.",
+            False,
         ),
         (
             GmailUnavailable,

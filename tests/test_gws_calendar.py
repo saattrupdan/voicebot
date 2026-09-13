@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import pathlib
-import subprocess
+import sys
 import threading
 import typing as t
 
@@ -26,30 +26,29 @@ START = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
 END = dt.datetime(2025, 1, 2, tzinfo=dt.UTC)
 
 
-def _completed(
-    payload: object, *, returncode: int = 0
-) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.CompletedProcess(
-        args=["gws"],
-        returncode=returncode,
-        stdout=json.dumps(payload).encode(),
-        stderr=b"",
+def _script(tmp_path: pathlib.Path, source: str, name: str = "gws") -> str:
+    path = tmp_path / name
+    path.write_text(f"#!{sys.executable}\n{source}")
+    path.chmod(0o700)
+    return str(path)
+
+
+def _json_script(tmp_path: pathlib.Path, payload: object, name: str = "gws") -> str:
+    return _script(
+        tmp_path, f"import json\nprint(json.dumps({payload!r}))\n", name=name
     )
 
 
-def test_event_arguments_are_bounded_and_read_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_event_arguments_are_bounded_and_read_only(tmp_path: pathlib.Path) -> None:
     """Event reads use only the fixed read-only command and allow-listed fields."""
-    seen: dict[str, object] = {}
-
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        seen["args"] = args
-        seen["kwargs"] = kwargs
-        return _completed({"items": []})
-
-    monkeypatch.setattr(subprocess, "run", run)
-    provider = GwsCalendarProvider(executable="/usr/local/bin/gws")
+    captured = tmp_path / "arguments.json"
+    executable = _script(
+        tmp_path,
+        "import json, pathlib, sys\n"
+        f"pathlib.Path({str(captured)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        "print(json.dumps({'items': []}))\n",
+    )
+    provider = GwsCalendarProvider(executable=executable)
     assert (
         provider.list_events(
             credential_ref="local",
@@ -62,9 +61,8 @@ def test_event_arguments_are_bounded_and_read_only(
         == []
     )
 
-    args = t.cast(list[str], seen["args"])
-    assert args[:3] == ["/usr/local/bin/gws", "calendar", "events"]
-    assert args[3] == "list"
+    args = t.cast(list[str], json.loads(captured.read_text()))
+    assert args[:3] == ["calendar", "events", "list"]
     assert args[-2:] == ["--format", "json"]
     params = json.loads(args[args.index("--params") + 1])
     assert params == {
@@ -79,33 +77,28 @@ def test_event_arguments_are_bounded_and_read_only(
         "timeMax": "2025-01-02T00:00:00Z",
         "timeMin": "2025-01-01T00:00:00Z",
     }
-    kwargs = t.cast(dict[str, object], seen["kwargs"])
-    assert kwargs["shell"] is False
-    assert kwargs["timeout"] == 15.0
 
 
-def test_freebusy_arguments_and_output_are_minimised(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_freebusy_arguments_and_output_are_minimised(tmp_path: pathlib.Path) -> None:
     """Free/busy sends calendar IDs only and returns no event details."""
-    seen: list[str] = []
-
-    def run(args: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
-        seen.extend(args)
-        return _completed(
-            {"calendars": {"primary": {"busy": [{"start": "a", "end": "b"}]}}}
-        )
-
-    monkeypatch.setattr(subprocess, "run", run)
-    result = GwsCalendarProvider(executable="/usr/local/bin/gws").query_freebusy(
+    captured = tmp_path / "arguments.json"
+    payload = {"calendars": {"primary": {"busy": [{"start": "a", "end": "b"}]}}}
+    executable = _script(
+        tmp_path,
+        "import json, pathlib, sys\n"
+        f"pathlib.Path({str(captured)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"print(json.dumps({payload!r}))\n",
+    )
+    result = GwsCalendarProvider(executable=executable).query_freebusy(
         credential_ref="local", calendar_ids=["primary"], starts_at=START, ends_at=END
     )
     assert [interval.as_dict() for interval in result["primary"]] == [
         {"starts_at": "a", "ends_at": "b"}
     ]
-    body = json.loads(seen[seen.index("--json") + 1])
+    args = t.cast(list[str], json.loads(captured.read_text()))
+    body = json.loads(args[args.index("--json") + 1])
     assert body == {"items": [{"id": "primary"}]}
-    assert "--page-all" not in seen
+    assert "--page-all" not in args
 
 
 @pytest.mark.parametrize(
@@ -117,46 +110,37 @@ def test_freebusy_arguments_and_output_are_minimised(
     ],
 )
 def test_cli_failures_are_safe_provider_errors(
-    monkeypatch: pytest.MonkeyPatch,
-    payload: bytes,
-    returncode: int,
-    expected: type[Exception],
+    tmp_path: pathlib.Path, payload: bytes, returncode: int, expected: type[Exception]
 ) -> None:
     """Malformed, failed, and unauthenticated CLI calls never expose diagnostics."""
-
-    def run(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(
-            args=["gws"], returncode=returncode, stdout=payload, stderr=payload
-        )
-
-    monkeypatch.setattr(subprocess, "run", run)
+    executable = _script(
+        tmp_path,
+        "import os\n"
+        f"os.write(1, {payload!r})\n"
+        f"os.write(2, {payload!r})\n"
+        f"raise SystemExit({returncode})\n",
+    )
     with pytest.raises(expected) as error:
-        GwsCalendarProvider(executable="/usr/local/bin/gws").list_events(
+        GwsCalendarProvider(executable=executable).list_events(
             credential_ref="local", calendar_id="primary", starts_at=START, ends_at=END
         )
     assert "login" not in str(error.value)
 
 
-def test_timeout_and_oversized_output_fail_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_timeout_and_oversized_output_fail_closed(tmp_path: pathlib.Path) -> None:
     """Process limits become safe unavailable or invalid-response errors."""
-
-    def timeout(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
-        raise subprocess.TimeoutExpired(cmd="gws", timeout=15)
-
-    monkeypatch.setattr(subprocess, "run", timeout)
+    timeout_executable = _script(
+        tmp_path, "import time\ntime.sleep(10)\n", name="timeout-gws"
+    )
     with pytest.raises(GoogleCalendarUnavailable):
-        GwsCalendarProvider(executable="/usr/local/bin/gws").list_events(
+        GwsCalendarProvider(executable=timeout_executable, timeout=0.2).list_events(
             credential_ref="local", calendar_id="primary", starts_at=START, ends_at=END
         )
 
-    monkeypatch.setattr(
-        subprocess, "run", lambda *_args, **_kwargs: _completed({"items": []})
-    )
+    oversized_executable = _json_script(tmp_path, {"items": []}, name="oversized-gws")
     with pytest.raises(GoogleCalendarInvalidResponse):
         GwsCalendarProvider(
-            executable="/usr/local/bin/gws", max_output_bytes=1
+            executable=oversized_executable, max_output_bytes=1
         ).list_events(
             credential_ref="local", calendar_id="primary", starts_at=START, ends_at=END
         )
@@ -184,16 +168,11 @@ def test_missing_cli_and_cancellation_fail_closed(
         )
 
 
-def test_tool_uses_local_profile_without_oauth_account(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tool_uses_local_profile_without_oauth_account(tmp_path: pathlib.Path) -> None:
     """The adapter resolves a gws profile without a fake refresh credential."""
-    monkeypatch.setattr(
-        subprocess, "run", lambda *_args, **_kwargs: _completed({"items": []})
-    )
     store = CredentialStore.memory_only()
     adapter = CalendarToolAdapter(
-        GwsCalendarProvider(executable="/usr/local/bin/gws"),
+        GwsCalendarProvider(executable=_json_script(tmp_path, {"items": []})),
         store,
         profile_aliases={"mig": "dan"},
         profile_accounts={"dan": "gws-local"},
