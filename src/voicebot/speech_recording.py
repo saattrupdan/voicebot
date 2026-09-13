@@ -397,7 +397,6 @@ def record_speech(
     pre_roll_chunks = math.ceil(float(cfg.pre_roll_seconds) / chunk_seconds)
     pre_roll: deque[np.ndarray] = deque(maxlen=max(1, pre_roll_chunks))
     frames: list[np.ndarray] = []
-    frames_left_to_ignore = 0
     post_wake_samples = 0
     audio_start: dt.datetime | None = None
     recording = False
@@ -433,14 +432,6 @@ def record_speech(
                         barge_in_samples += frame.size
                         if barge_in_samples > barge_in_confirmation_samples:
                             return np.empty(0, dtype=np.int16), None
-                    if frames_left_to_ignore:
-                        detector.process_chunk(frame, update_noise_floor=False)
-                        frames_left_to_ignore -= 1
-                        if frames_left_to_ignore == 0:
-                            detector.reset_activity()
-                            pre_roll.clear()
-                        continue
-
                     post_wake_chunk_start = post_wake_samples
                     if armed_after_wake:
                         post_wake_samples += frame.size
@@ -546,15 +537,12 @@ def record_speech(
             if restart_after_acknowledgement:
                 assert wake_word_response is not None
                 synthesise_speech(text=wake_word_response, synthesiser=synthesiser)
-                # Start the post-wake clock only after playback and its discard period.
+                # A fresh recorder excludes playback without dropping the reply.
                 wake_word_model.reset()
                 detector.reset_activity()
                 pre_roll.clear()
                 armed_after_wake = True
                 post_wake_samples = 0
-                frames_left_to_ignore = max(
-                    1, math.ceil(float(cfg.wake_word_seconds) / chunk_seconds)
-                )
                 continue
             break
     finally:
@@ -600,11 +588,14 @@ def record(chunk_size: int) -> Generator[PvRecorder, None, None]:
         A started recorder.
     """
     recorder = PvRecorder(frame_length=chunk_size)
-    recorder.start()
+    started = False
     try:
+        recorder.start()
+        started = True
         yield recorder
     finally:
         try:
-            recorder.stop()
+            if started:
+                recorder.stop()
         finally:
             recorder.delete()
