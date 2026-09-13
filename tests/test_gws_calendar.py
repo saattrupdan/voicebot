@@ -1,4 +1,4 @@
-"""Contract tests for the local ``gws`` Calendar backend."""
+"""Contract tests for the local ``gws`` Calendar provider."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import typing as t
 import pytest
 
 from voicebot.auth.credentials import CredentialStore
-from voicebot.providers.google_calendar import (
+from voicebot.providers.calendar_domain import (
     GoogleCalendarInvalidResponse,
     GoogleCalendarUnauthenticated,
     GoogleCalendarUnavailable,
@@ -215,10 +215,10 @@ def test_tool_uses_local_profile_without_oauth_account(
     assert store.account("gws-local") is None
 
 
-def test_runtime_selects_gws_backend_and_shipped_binding(
+def test_runtime_uses_gws_and_shipped_binding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """Runtime assembly selects gws and retains the configured Danish binding."""
+    """Runtime assembly uses gws and retains the configured Danish binding."""
     monkeypatch.setattr(
         "voicebot.providers.gws_calendar.shutil.which", lambda _: "/usr/bin/gws"
     )

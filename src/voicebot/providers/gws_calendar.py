@@ -1,4 +1,4 @@
-"""Read-only Google Calendar backend through the local ``gws`` CLI.
+"""Read-only Google Calendar provider through the local ``gws`` CLI.
 
 This adapter deliberately does not know about OAuth credentials.  The CLI owns its
 already-authenticated local session; this process only supplies bounded Calendar API
@@ -16,7 +16,7 @@ import shutil
 import subprocess
 
 from ..tool_runtime import ToolContext
-from .google_calendar import (
+from .calendar_domain import (
     MAX_RESULTS,
     BusyInterval,
     CalendarEvent,
