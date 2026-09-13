@@ -1,5 +1,6 @@
 """Sanitised contract tests for the unofficial Listonic adapter."""
 
+import base64
 import collections.abc as c
 import datetime as dt
 import json
@@ -11,7 +12,11 @@ import pytest
 
 from scripts.integrations import _PersistedAuthHandler
 from voicebot.auth import CredentialError, CredentialStore, MemoryCredentialBackend
-from voicebot.auth.listonic import IsolatedBrowserSession, ListonicAuthHandler
+from voicebot.auth.listonic import (
+    LISTONIC_LOGIN_URL,
+    IsolatedBrowserSession,
+    ListonicAuthHandler,
+)
 from voicebot.providers.listonic import (
     LISTONIC_BASE_URL,
     ListonicAuthenticationError,
@@ -25,6 +30,14 @@ from voicebot.tool_runtime import ToolContext, ToolStatus
 from voicebot.tools.shopping import ShoppingTools
 
 NOW = dt.datetime(2030, 1, 1, tzinfo=dt.UTC)
+
+
+def _jwt(expiry: dt.datetime) -> str:
+    def encode(value: dict[str, object]) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode({'exp': expiry.timestamp()})}.signature"
 
 
 def _provider(handler: c.Callable[[httpx.Request], httpx.Response]) -> ListonicProvider:
@@ -55,7 +68,7 @@ def test_provider_pins_contract_and_mixed_request_casing() -> None:
         calls.append(request)
         if request.method == "GET" and request.url.path == "/api/lists":
             return httpx.Response(
-                200, json={"lists": [{"id": "list-1", "Name": "Groceries"}]}
+                200, json=[{"Id": "list-1", "Name": "Groceries", "ItemsCount": 2}]
             )
         if request.method == "POST":
             return httpx.Response(201, json={"id": "item-2", "name": "Bread"})
@@ -66,7 +79,13 @@ def test_provider_pins_contract_and_mixed_request_casing() -> None:
     provider.list_lists(account)
     provider.add_item(account, "list-1", name="Bread", amount=2, unit="loaves")
 
-    assert calls[0].url == httpx.URL(f"{LISTONIC_BASE_URL}/api/lists")
+    assert calls[0].url == httpx.URL(
+        f"{LISTONIC_BASE_URL}/api/lists"
+        "?includeShares=true&archive=false&includeItems=true"
+    )
+    assert calls[0].headers["Version"] == "web:4.0.0"
+    assert calls[0].headers["Culture"] == "en"
+    assert calls[0].headers["DeviceId"]
     assert calls[1].method == "POST"
     assert calls[1].url.path == "/api/lists/list-1/items"
     assert json.loads(calls[1].content) == {
@@ -96,15 +115,13 @@ def test_tools_use_defaults_and_require_structured_removal_confirmation() -> Non
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/api/lists":
-            return httpx.Response(
-                200, json={"lists": [{"id": "list-1", "name": "Groceries"}]}
-            )
+            return httpx.Response(200, json=[{"Id": "list-1", "Name": "Groceries"}])
         if request.method == "GET":
             return httpx.Response(
-                200, json=[{"id": "item-1", "name": "Milk", "checked": False}]
+                200, json=[{"Id": "item-1", "Name": "Milk", "Amount": "", "Checked": 0}]
             )
         if request.method == "DELETE":
-            return httpx.Response(204)
+            return httpx.Response(200)
         raise AssertionError(request.url)
 
     provider = _provider(handler)
@@ -207,7 +224,7 @@ def test_list_requires_explicit_default_and_removal_gate() -> None:
         {"profile_name": None, "list_name": None, "include_checked": False},
     )
     assert result.status is ToolStatus.NOT_FOUND
-    with pytest.raises(ListonicContractDriftError, match="verification"):
+    with pytest.raises(ListonicContractDriftError, match="not enabled"):
         provider.remove_item(account, "list-1", "item-1")
     assert calls == ["GET"]
 
@@ -281,6 +298,88 @@ def test_access_state_rehydrates_and_expires_without_opening_circuit() -> None:
         expired_store.load_provider_secret(account.credential_ref, "listonic_access")
         is None
     )
+
+
+def test_expired_access_refreshes_headlessly_and_rotates_keychain_token() -> None:
+    """Refresh Listonic without a browser and retain only the rotated credential."""
+    backend = MemoryCredentialBackend()
+    store = CredentialStore(backend=backend)
+    now = dt.datetime.now(dt.UTC)
+    account = store.connect("listonic", "household", refresh_token="old-refresh")
+    store.store_provider_secret(
+        account.credential_ref,
+        "listonic_access",
+        json.dumps(
+            {
+                "access_token": "expired",
+                "expires_at": (now - dt.timedelta(seconds=1)).isoformat(),
+            }
+        ),
+    )
+    refreshed_access = _jwt(now + dt.timedelta(hours=1))
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path == "/api/loginextended":
+            assert request.method == "POST"
+            assert dict(request.url.params) == {
+                "provider": "refresh_token",
+                "autoMerge": "1",
+                "autoDestruct": "1",
+            }
+            assert request.headers["Content-Type"].startswith(
+                "application/x-www-form-urlencoded"
+            )
+            assert request.headers["ClientAuthorization"].startswith("Bearer ")
+            assert "Authorization" not in request.headers
+            assert request.content == b"refresh_token=old-refresh"
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": refreshed_access,
+                    "refresh_token": "rotated-refresh",
+                },
+            )
+        assert request.url.path == "/api/lists"
+        assert request.headers["Authorization"] == f"Bearer {refreshed_access}"
+        return httpx.Response(200, json=[])
+
+    provider = ListonicProvider(
+        store,
+        accounts={"household": account},
+        enabled=True,
+        allow_unofficial=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert provider.list_lists(account) == []
+    assert [request.url.path for request in calls] == [
+        "/api/loginextended",
+        "/api/lists",
+    ]
+    assert store.load_refresh_token(account.credential_ref) == "rotated-refresh"
+    assert store.load_provider_secret(account.credential_ref, "listonic_access")
+
+
+def test_rejected_refresh_fails_permanently_before_body_parsing() -> None:
+    """Treat a rejected non-JSON refresh as re-onboarding, not transient drift."""
+    store = CredentialStore.memory_only()
+    account = store.connect("listonic", "household", refresh_token="rejected-refresh")
+
+    def rejected(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/loginextended"
+        return httpx.Response(401, text="not json")
+
+    provider = ListonicProvider(
+        store,
+        accounts={"household": account},
+        enabled=True,
+        allow_unofficial=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(rejected)),
+    )
+    with pytest.raises(ListonicAuthenticationError, match="re-onboarding"):
+        provider.list_lists(account)
+    assert store.account_status(account.credential_ref).value == "disconnected"
 
 
 def test_listonic_login_status_and_disconnect_survive_reconstruction(
@@ -361,7 +460,7 @@ def test_browser_onboarding_destroys_session_and_redacts_failure() -> None:
             self.destroyed = False
 
         def open_login(self, url: str) -> None:
-            assert url == f"{LISTONIC_BASE_URL}/login"
+            assert url == LISTONIC_LOGIN_URL
 
         def export_tokens(self) -> dict[str, str]:
             return {
@@ -381,6 +480,38 @@ def test_browser_onboarding_destroys_session_and_redacts_failure() -> None:
     account = handler.login("household")
     assert account.profile == "household"
     assert browser.destroyed
+
+    current_browser = Browser()
+    current_browser.export_tokens = lambda: {
+        "auth-persist": json.dumps(
+            {
+                "state": {
+                    "token": _jwt(NOW + dt.timedelta(hours=1)),
+                    "refreshToken": "current-refresh",
+                }
+            }
+        )
+    }
+    current = ListonicAuthHandler(
+        CredentialStore.memory_only(), lambda: current_browser, clock=lambda: NOW
+    ).login("current")
+    assert current.profile == "current"
+    assert current_browser.destroyed
+
+    for malformed_token in ("not-a-jwt", "a.e30.b", "x" * 8193):
+        malformed_browser = Browser()
+        malformed_browser.export_tokens = lambda token=malformed_token: {
+            "auth-persist": json.dumps(
+                {"state": {"token": token, "refreshToken": "refresh"}}
+            )
+        }
+        with pytest.raises(CredentialError):
+            ListonicAuthHandler(
+                CredentialStore.memory_only(),
+                lambda browser=malformed_browser: browser,
+                clock=lambda: NOW,
+            ).login("malformed")
+        assert malformed_browser.destroyed
 
     class BrokenBrowser(Browser):
         def export_tokens(self) -> dict[str, str]:

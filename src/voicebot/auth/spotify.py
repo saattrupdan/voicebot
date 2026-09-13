@@ -32,6 +32,7 @@ SPOTIFY_SCOPES: tuple[str, str] = (
 SPOTIFY_SCOPE = " ".join(SPOTIFY_SCOPES)
 AUTHORISATION_ENDPOINT = "https://accounts.spotify.com/authorize"
 TOKEN_ENDPOINT = "https://accounts.spotify.com/api/token"
+SPOTIFY_CALLBACK_PORT = 8766
 
 
 class SpotifyOAuthError(CredentialError):
@@ -118,7 +119,7 @@ class SpotifyAuthHandler:
         open_browser: c.Callable[[str], object] | None = None,
         callback_waiter: c.Callable[[str], CallbackResult] | None = None,
         host: str = "127.0.0.1",
-        port: int = 0,
+        port: int = SPOTIFY_CALLBACK_PORT,
         callback_timeout: float = 300.0,
         authorisation_endpoint: str = AUTHORISATION_ENDPOINT,
         token_endpoint: str = TOKEN_ENDPOINT,

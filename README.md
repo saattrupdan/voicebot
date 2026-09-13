@@ -69,7 +69,8 @@ with their normal unavailable or not-connected status.
 
 ### Spotify OAuth setup
 
-Set the Spotify client ID before running Spotify setup:
+Create a Spotify application with the exact redirect URI
+`http://127.0.0.1:8766/callback`, then set its client ID before running setup:
 
 ```sh
 export SPOTIFY_CLIENT_ID=your-spotify-client-id
@@ -85,23 +86,22 @@ both `integrations.listonic.enabled` and
 `integrations.listonic.allow_unofficial` are true. Login uses a disposable isolated
 browser helper and never asks the bot for a Listonic password. Install `agent-browser`
 or set `LISTONIC_BROWSER_HELPER` before Listonic login; the command reports a local
-setup error when neither is available. The helper must expose the authenticated browser
-state; refresh is deliberately fail-closed because Listonic has no verified refresh
-contract.
-An expired access state reports that re-onboarding is required. Keep the integration
-disabled unless the operational risk of an undocumented API is acceptable; contract
-drift fails closed.
+setup error when neither is available. Only the authenticated access and refresh fields
+are imported into the system keychain, after which the browser profile is destroyed.
+Normal operation and token refresh are headless and do not require an open or logged-in
+browser. Refresh uses the contract and public web-client metadata pinned from Listonic's
+web app; rejected refresh credentials require re-onboarding, while other contract drift
+opens only the Listonic circuit breaker.
 
 Shopping requests which omit `list_name` require an explicit per-profile entry under
 `integrations.listonic.default_lists`; the runtime never chooses the first persisted
 binding.
 
-Item removal is not verified and is unavailable by default even when Listonic reads and
-adds are enabled. Enabling `allow_unverified_item_removal` requires prior live testing
-against a disposable list; this project does not claim that endpoint is verified. When
-enabled, each removal still requires a local, device-bound yes/no confirmation. List
-creation, sharing, whole-list deletion, and other unsupported operations remain
-unavailable.
+Item removal has a separate `allow_unverified_item_removal` operator gate even when
+Listonic reads and additions are enabled. The current DELETE route was live-tested with
+a temporary item before enabling it for profile `dan`; each removal still requires a
+local, device-bound yes/no confirmation. List creation, sharing, whole-list deletion,
+and other unsupported operations remain unavailable.
 
 ## Conversation and audio behaviour
 

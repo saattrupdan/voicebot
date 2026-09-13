@@ -376,17 +376,26 @@ integrations:
     profile_bindings:
       dan: gws-local
   spotify:
-    enabled: false
+    enabled: true
     default_profile: dan
     # Device aliases are profile-scoped to prevent cross-account routing.
-    device_aliases: {}
+    device_aliases:
+      dan:
+        computer: Dan’s MacBook Pro
+        macbook: Dan’s MacBook Pro
+        min computer: Dan’s MacBook Pro
   listonic:
-    enabled: false
-    allow_unofficial: false
-    allow_unverified_item_removal: false
-    list_aliases: {}
+    enabled: true
+    allow_unofficial: true
+    allow_unverified_item_removal: true
+    list_aliases:
+      dan:
+        indkøbslisten: "149620395"
+        indkøbsliste: "149620395"
+        indkøb: "149620395"
     # Required per profile when a shopping tool omits list_name.
-    default_lists: {}
+    default_lists:
+      dan: "149620395"
 scheduler:
   poll_seconds: 1
   lease_seconds: 30

@@ -5,12 +5,23 @@ import urllib.parse
 import httpx
 
 from voicebot.auth.credentials import CredentialStore, ProviderAccount, TokenSet
-from voicebot.auth.spotify import SpotifyAuthHandler, SpotifyCallback
+from voicebot.auth.spotify import (
+    SPOTIFY_CALLBACK_PORT,
+    SpotifyAuthHandler,
+    SpotifyCallback,
+)
 from voicebot.providers.spotify import SpotifyProvider
 from voicebot.tool_runtime import ToolContext, ToolStatus, validate_arguments
 from voicebot.tools.spotify import create_spotify_tool_specs
 
 _SCOPES = ("user-read-playback-state", "user-modify-playback-state")
+
+
+def test_callback_uses_fixed_registerable_port() -> None:
+    """Spotify's exact redirect URI can be registered before onboarding."""
+    auth = SpotifyAuthHandler(client_id="client", store=CredentialStore.memory_only())
+
+    assert auth.port == SPOTIFY_CALLBACK_PORT == 8766
 
 
 def _account(store: CredentialStore) -> ProviderAccount:

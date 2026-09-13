@@ -559,28 +559,31 @@ The voicebot never receives or stores the Listonic password.
 The following production behaviour was verified during a disposable-list test:
 
 ```text
-GET    /api/lists                              -> 200
+GET    /api/lists?includeShares=true&archive=false&includeItems=true -> 200
 POST   /api/lists                              -> 201
 GET    /api/lists/{list_id}                    -> 200
 GET    /api/lists/{list_id}/items              -> 200
 POST   /api/lists/{list_id}/items              -> 201
 PATCH  /api/lists/{list_id}/items/{item_id}    -> 200
+DELETE /api/lists/{list_id}/items/{item_id}    -> 200
 ```
 
 Observed request fields are inconsistent:
 
 - Creating a list uses `Name` and `SortMode`.
 - Creating an item uses `Amount`, `Unit`, and lowercase `name`.
-- Checking an item uses lowercase `checked` and `itemId`.
+- Checking an item uses lowercase `checked` with numeric `0`/`1` and `itemId`.
+- Item responses use numeric `Checked` and may encode an absent `Amount` as `""`.
 
 This casing remains isolated inside the Listonic adapter. Domain models and tool schemas
-use consistent Python naming. The item DELETE endpoint remains unverified and is gated
-by `allow_unverified_item_removal: false`; enabling it requires a live check against a
-disposable list and is not an assertion that this plan verified it.
+use consistent Python naming. The item DELETE endpoint was live-tested with a temporary
+item before being enabled for profile `dan`; it remains separately operator-gated and
+each removal requires device-bound confirmation.
 
-Refresh and revocation behaviour must be verified before unattended rollout. If refresh
-fails or the observed contract changes, the adapter opens a Listonic-only circuit
-breaker and asks for re-onboarding. It must not probe guessed endpoints.
+Headless refresh uses `POST /api/loginextended` with provider `refresh_token`, the
+keychain refresh token, and public web-client metadata pinned from Listonic's web app.
+A rejected refresh credential asks for re-onboarding. If the observed contract changes,
+the adapter opens a Listonic-only circuit breaker rather than probing guessed endpoints.
 
 ## Profile and alias model
 

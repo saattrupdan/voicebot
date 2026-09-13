@@ -38,7 +38,10 @@ def test_runtime_replaces_all_model_tools_and_honours_kill_switches(
     tmp_path: pathlib.Path,
 ) -> None:
     """Disabled providers remain real bound tools which fail closed."""
-    runtime = build_integration_runtime(_config(tmp_path / "state.sqlite"))
+    config = _config(tmp_path / "state.sqlite")
+    config.integrations.spotify.enabled = False
+    config.integrations.listonic.enabled = False
+    runtime = build_integration_runtime(config)
     try:
         assert MODEL_TOOL_NAMES <= set(runtime.registry.names)
         for name in (
@@ -86,6 +89,7 @@ def test_listonic_removal_has_independent_provider_gate(tmp_path: pathlib.Path) 
     config = _config(tmp_path / "state.sqlite")
     config.integrations.listonic.enabled = True
     config.integrations.listonic.allow_unofficial = True
+    config.integrations.listonic.allow_unverified_item_removal = False
     runtime = build_integration_runtime(config)
     try:
         provider = t.cast(ListonicProvider, runtime.providers[2])
@@ -186,15 +190,13 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
     def listonic_handler(request: httpx.Request) -> httpx.Response:
         nonlocal listonic_mutations
         if request.method == "GET" and request.url.path == "/api/lists":
-            return httpx.Response(
-                200, json={"lists": [{"id": "list-1", "name": "Groceries"}]}
-            )
+            return httpx.Response(200, json=[{"Id": "list-1", "Name": "Groceries"}])
         if request.method == "GET":
             return httpx.Response(
                 200, json=[{"id": "item-1", "name": "Milk", "checked": False}]
             )
         listonic_mutations += 1
-        return httpx.Response(204)
+        return httpx.Response(200)
 
     spotify.http_client.close()
     spotify.http_client = httpx.Client(transport=httpx.MockTransport(spotify_handler))
@@ -315,7 +317,8 @@ def test_documented_safety_configuration_matches_defaults() -> None:
     readme = pathlib.Path("README.md").read_text()
     plan = pathlib.Path("docs/tool-integrations-plan.md").read_text()
     assert config.mutations_enabled is True
-    assert config.integrations.listonic.allow_unverified_item_removal is False
+    assert config.integrations.listonic.allow_unverified_item_removal is True
+    assert "live-tested with" in readme
     assert "allow_unverified_item_removal" in readme
     assert "at-least-once" in readme
     assert "can repeat a reminder" in readme

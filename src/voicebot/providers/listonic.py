@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import collections.abc as c
 import dataclasses
 import datetime as dt
 import json
 import logging
+import math
 import threading
-from urllib.parse import quote
+import time
+import uuid
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -20,12 +25,20 @@ from ..auth.credentials import (
     PermanentRefreshError,
     ProviderAccount,
     RefreshCallback,
+    TokenSet,
 )
 
 logger = logging.getLogger(__name__)
 
-LISTONIC_BASE_URL = "https://listonic.com"
+LISTONIC_BASE_URL = "https://api.listonic.com"
 LISTONIC_PROVIDER = "listonic"
+LISTONIC_WEB_VERSION = "web:4.0.0"
+# Public protocol metadata shipped in Listonic's browser application. It is not a
+# user credential; pinning it avoids executing or trusting remote JavaScript at runtime.
+_LISTONIC_WEB_CLIENT = "listonicv2:fjdfsoj9874jdfhjkh34jkhffdfff"
+_LISTONIC_WEB_AUTHORISATION = base64.b64encode(
+    _LISTONIC_WEB_CLIENT.encode("ascii")
+).decode("ascii")
 
 
 class ListonicError(RuntimeError):
@@ -167,7 +180,7 @@ class ListonicProvider:
             allow_unofficial (optional):
                 Explicit acknowledgement of the unofficial API.
             allow_unverified_item_removal (optional):
-                Explicit operator gate for the unverified DELETE operation.
+                Explicit operator gate for the separately controlled DELETE operation.
             http_client (optional):
                 A raw ``httpx.Client``; injection is intended for contract tests.
             breaker (optional):
@@ -185,7 +198,8 @@ class ListonicProvider:
         self.client = http_client or httpx.Client(base_url=LISTONIC_BASE_URL)
         self._owns_client = http_client is None
         self.breaker = breaker or ListonicCircuitBreaker()
-        self._refresh_callback = refresh
+        self._lcode = str(int(time.time() * 1000))
+        self._refresh_callback = refresh or self._refresh_token
         self._session_tokens: dict[CredentialReference, ListonicSessionToken] = {}
         for account in self.accounts.values():
             self._rehydrate_session_tokens(account)
@@ -239,7 +253,16 @@ class ListonicProvider:
 
     def list_lists(self, account: ProviderAccount) -> list[ShoppingList]:
         """Return the account's shopping lists."""
-        payload = self._request(account=account, method="GET", path="/api/lists")
+        payload = self._request(
+            account=account,
+            method="GET",
+            path="/api/lists",
+            params={
+                "includeShares": "true",
+                "archive": "false",
+                "includeItems": "true",
+            },
+        )
         try:
             values = _collection(payload=payload, key_names=("lists", "Lists"))
             return [_shopping_list(value) for value in values]
@@ -318,7 +341,7 @@ class ListonicProvider:
             account=account,
             method="PATCH",
             path=f"/api/lists/{_path_id(list_id)}/items/{_path_id(item_id)}",
-            json={"checked": checked, "itemId": item_id},
+            json={"checked": int(checked), "itemId": item_id},
         )
         try:
             return _shopping_item(_object(payload=payload), list_id=list_id)
@@ -327,16 +350,14 @@ class ListonicProvider:
             raise
 
     def remove_item(self, account: ProviderAccount, list_id: str, item_id: str) -> None:
-        """Remove one item only when the unverified endpoint gate is explicit."""
+        """Remove one item only when the separate endpoint gate is explicit."""
         if not self.allow_unverified_item_removal:
-            raise ListonicContractDriftError(
-                "Listonic item removal requires explicit live verification"
-            )
+            raise ListonicContractDriftError("Listonic item removal is not enabled")
         self._request(
             account=account,
             method="DELETE",
             path=f"/api/lists/{_path_id(list_id)}/items/{_path_id(item_id)}",
-            expected_status=204,
+            expected_status=200,
         )
 
     def _request(
@@ -346,6 +367,7 @@ class ListonicProvider:
         method: str,
         path: str,
         json: dict[str, object] | None = None,
+        params: dict[str, str] | None = None,
         expected_status: int | None = None,
     ) -> object:
         if not self.available:
@@ -357,7 +379,8 @@ class ListonicProvider:
             response = self.client.request(
                 method,
                 f"{LISTONIC_BASE_URL}{path}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=self._request_headers(account, access_token=token),
+                params=params,
                 json=json,
             )
         except ListonicError:
@@ -368,7 +391,7 @@ class ListonicProvider:
         expected = expected_status or _EXPECTED_STATUS[(method, _path_kind(path))]
         if response.status_code != expected:
             self._raise_response_status(response=response, expected=expected)
-        if expected == 204:
+        if method == "DELETE" or expected == 204:
             return None
         try:
             return response.json()
@@ -377,6 +400,65 @@ class ListonicProvider:
             raise ListonicContractDriftError(
                 "Listonic response format changed"
             ) from None
+
+    def _request_headers(
+        self, account: ProviderAccount, *, access_token: str | None = None
+    ) -> dict[str, str]:
+        headers = {
+            "Version": LISTONIC_WEB_VERSION,
+            "LCode": self._lcode,
+            "DeviceId": str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL, f"voicebot:listonic:{account.credential_ref}"
+                )
+            ),
+            "Culture": "en",
+        }
+        if access_token is not None:
+            headers["Authorization"] = f"Bearer {access_token}"
+        return headers
+
+    def _refresh_token(self, refresh_token: str) -> TokenSet:
+        headers = {
+            "Version": LISTONIC_WEB_VERSION,
+            "ClientAuthorization": f"Bearer {_LISTONIC_WEB_AUTHORISATION}",
+            "DeviceId": str(uuid.uuid5(uuid.NAMESPACE_URL, "voicebot:listonic")),
+            "Culture": "en",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        try:
+            response = self.client.post(
+                f"{LISTONIC_BASE_URL}/api/loginextended",
+                params={
+                    "provider": "refresh_token",
+                    "autoMerge": "1",
+                    "autoDestruct": "1",
+                },
+                content=urlencode({"refresh_token": refresh_token}),
+                headers=headers,
+            )
+        except httpx.HTTPError:
+            raise CredentialError("Listonic token refresh failed") from None
+        if response.status_code in {400, 401, 403}:
+            raise PermanentRefreshError("Listonic refresh credential was rejected")
+        if not 200 <= response.status_code < 300:
+            raise CredentialError("Listonic token refresh failed")
+        try:
+            payload = response.json()
+        except TypeError, ValueError:
+            raise CredentialError("Listonic token refresh failed") from None
+        if not isinstance(payload, dict):
+            raise CredentialError("Listonic token refresh failed")
+        access = payload.get("access_token")
+        rotated_refresh = payload.get("refresh_token")
+        if not isinstance(access, str) or not isinstance(rotated_refresh, str):
+            raise CredentialError("Listonic token refresh returned invalid data")
+        expiry = _jwt_expiry(access)
+        if expiry is None or expiry <= dt.datetime.now(dt.UTC):
+            raise CredentialError("Listonic token refresh returned invalid data")
+        return TokenSet(
+            access_token=access, expires_at=expiry, refresh_token=rotated_refresh
+        )
 
     def _access_token(self, account: ProviderAccount) -> str:
         if (
@@ -400,6 +482,20 @@ class ListonicProvider:
         try:
             token = self.credential_store.get_access_token(
                 account.credential_ref, self._refresh_callback
+            )
+            expiry = _jwt_expiry(token)
+            if expiry is None:
+                raise CredentialError("Listonic token refresh returned invalid data")
+            self.credential_store.store_provider_secret(
+                account.credential_ref,
+                "listonic_access",
+                json.dumps(
+                    {"access_token": token, "expires_at": expiry.isoformat()},
+                    separators=(",", ":"),
+                ),
+            )
+            self._session_tokens[account.credential_ref] = ListonicSessionToken(
+                access_token=token, refresh_token="", expires_at=expiry
             )
         except CredentialError, PermanentRefreshError:
             self.credential_store.mark_disconnected(account.credential_ref)
@@ -461,7 +557,7 @@ _EXPECTED_STATUS: dict[tuple[str, str], int] = {
     ("GET", "items"): 200,
     ("POST", "items"): 201,
     ("PATCH", "item"): 200,
-    ("DELETE", "item"): 204,
+    ("DELETE", "item"): 200,
 }
 
 
@@ -507,7 +603,9 @@ def _collection(payload: object, key_names: tuple[str, ...]) -> list[dict[str, o
 def _shopping_list(value: dict[str, object]) -> ShoppingList:
     identifier = _field(value, "id", "Id", "ID")
     name = _field(value, "name", "Name")
-    count = _field(value, "itemCount", "ItemCount", "item_count", default=None)
+    count = _field(
+        value, "itemCount", "ItemCount", "ItemsCount", "item_count", default=None
+    )
     if not isinstance(identifier, str) or not isinstance(name, str):
         raise ListonicContractDriftError("Listonic response format changed")
     if count is not None and not isinstance(count, int):
@@ -523,20 +621,68 @@ def _shopping_item(value: dict[str, object], list_id: str) -> ShoppingItem:
     checked = _field(value, "checked", "Checked", default=False)
     if not isinstance(identifier, str) or not isinstance(name, str):
         raise ListonicContractDriftError("Listonic response format changed")
-    if amount is not None and not isinstance(amount, (int, float)):
-        raise ListonicContractDriftError("Listonic response format changed")
+    amount_value = _response_amount(amount)
     if unit is not None and not isinstance(unit, str):
         raise ListonicContractDriftError("Listonic response format changed")
-    if not isinstance(checked, bool):
+    if isinstance(checked, bool):
+        checked_value = checked
+    elif isinstance(checked, int) and checked in {0, 1}:
+        checked_value = bool(checked)
+    else:
         raise ListonicContractDriftError("Listonic response format changed")
     return ShoppingItem(
         id=identifier,
         list_id=list_id,
         name=name,
-        amount=float(amount) if isinstance(amount, int) else amount,
+        amount=amount_value,
         unit=unit,
-        checked=checked,
+        checked=checked_value,
     )
+
+
+def _response_amount(value: object) -> float | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ListonicContractDriftError("Listonic response format changed")
+    try:
+        amount = float(value) if isinstance(value, (int, float, str)) else math.nan
+    except ValueError:
+        amount = math.nan
+    if not math.isfinite(amount):
+        raise ListonicContractDriftError("Listonic response format changed")
+    return amount
+
+
+def _jwt_expiry(token: str) -> dt.datetime | None:
+    """Read only the expiry claim from a bounded JWT-shaped access token."""
+    if len(token) > 8192:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[1]:
+        return None
+    try:
+        payload_bytes = base64.b64decode(
+            parts[1] + "=" * (-len(parts[1]) % 4), altchars=b"-_", validate=True
+        )
+        if len(payload_bytes) > 4096:
+            return None
+        payload = json.loads(payload_bytes)
+    except binascii.Error, UnicodeDecodeError, ValueError:
+        return None
+    if not isinstance(payload, c.Mapping):
+        return None
+    value = payload.get("exp")
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+    ):
+        return None
+    try:
+        return dt.datetime.fromtimestamp(value, tz=dt.UTC)
+    except OverflowError, OSError, ValueError:
+        return None
 
 
 def _field(value: dict[str, object], *names: str, default: object = ...) -> object:

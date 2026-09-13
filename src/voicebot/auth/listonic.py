@@ -8,11 +8,7 @@ import datetime as dt
 import json
 import typing as t
 
-from ..providers.listonic import (
-    LISTONIC_BASE_URL,
-    LISTONIC_PROVIDER,
-    ListonicSessionToken,
-)
+from ..providers.listonic import LISTONIC_PROVIDER, ListonicSessionToken, _jwt_expiry
 from .credentials import (
     ConnectionStatus,
     CredentialError,
@@ -21,7 +17,7 @@ from .credentials import (
     ProviderAuthHandler,
 )
 
-LISTONIC_LOGIN_URL = f"{LISTONIC_BASE_URL}/login"
+LISTONIC_LOGIN_URL = "https://app.listonic.com/en/lists/login"
 
 
 class IsolatedBrowserSession(t.Protocol):
@@ -226,6 +222,10 @@ def _import_session_tokens(value: object, *, now: dt.datetime) -> ListonicSessio
         expires_in = token_value.get("expires_in")
         if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool):
             expiry = now + dt.timedelta(seconds=expires_in)
+    if expiry is None and isinstance(access, str):
+        parsed_jwt_expiry = _jwt_expiry(access)
+        if parsed_jwt_expiry is not None:
+            expiry = parsed_jwt_expiry
     if not isinstance(access, str) or not access:
         raise ValueError("browser token export has no access token")
     if not isinstance(refresh, str) or not refresh:
@@ -245,6 +245,8 @@ def _find_token_mapping(value: c.Mapping[str, object]) -> c.Mapping[str, object]
     }
     access = normalised.get("access_token", normalised.get("accesstoken"))
     refresh = normalised.get("refresh_token", normalised.get("refreshtoken"))
+    if access is None and isinstance(refresh, str):
+        access = normalised.get("token")
     if isinstance(access, str) and isinstance(refresh, str):
         return {
             "access_token": access,

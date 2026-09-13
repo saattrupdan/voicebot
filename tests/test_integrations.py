@@ -1,5 +1,7 @@
 """Tests for the safe integrations setup command."""
 
+import pytest
+
 from scripts.integrations import IntegrationStatus, ProviderRegistry, main
 
 
@@ -24,8 +26,9 @@ class FakeProvider:
         self.disconnections.append(profile)
 
 
-def test_unconfigured_provider_is_harmless() -> None:
+def test_unconfigured_provider_is_harmless(monkeypatch: pytest.MonkeyPatch) -> None:
     """Leave provider-specific onboarding disabled until a handler is registered."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
     output: list[str] = []
 
     result = main(["login", "spotify", "--profile", "household"], output=output.append)
