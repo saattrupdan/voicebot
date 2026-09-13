@@ -367,6 +367,9 @@ integrations:
     calendar_aliases:
       dan:
         min kalender: primary
+  gmail:
+    enabled: true
+    default_profile: dan
   spotify:
     enabled: false
     default_profile: dan

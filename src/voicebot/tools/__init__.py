@@ -126,6 +126,7 @@ MUTATION_TOOL_NAMES = frozenset(
         "add_shopping_items",
         "set_shopping_item_checked",
         "remove_shopping_item",
+        "create_gmail_draft",
     }
 )
 
@@ -149,6 +150,10 @@ MODEL_TOOL_NAMES = frozenset(
         "add_shopping_items",
         "set_shopping_item_checked",
         "remove_shopping_item",
+        "search_gmail_messages",
+        "list_latest_gmail_messages",
+        "read_gmail_message",
+        "create_gmail_draft",
         # Historical tools remain model-visible and are intentionally kept in the
         # same closed registry as the integration tools.
         "get_weather",

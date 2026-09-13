@@ -56,11 +56,13 @@ Install `gws` and authenticate it once (for example with `gws auth login`). Cale
 reads are limited to event listing and free/busy queries. The profile `dan` is bound to
 Google's `primary` calendar under the spoken alias `min kalender`.
 
-An authenticated `gws` installation is the sole Calendar prerequisite. The same local
-Workspace authentication may later support Gmail, but this task adds no email tools.
-The setup CLI does not log in to or disconnect the `gws` session. If `gws` is missing,
-unauthenticated, times out, or returns invalid JSON, Calendar tools fail closed with
-their normal unavailable or not-connected status.
+An authenticated `gws` installation is the sole Calendar and Gmail prerequisite. Gmail
+is enabled for the `dan` profile in the shipped configuration. Gmail tools can search or
+read bounded message summaries and save unsent drafts; they never send mail. Message
+handles are short-lived, device-scoped process-local values, and attachments are never
+downloaded. The setup CLI does not log in to or disconnect the `gws` session. If `gws` is
+missing, unauthenticated, times out, or returns invalid JSON, Calendar tools fail closed
+with their normal unavailable or not-connected status.
 
 ### Spotify OAuth setup
 

@@ -10,10 +10,7 @@ from __future__ import annotations
 import collections.abc as c
 import datetime as dt
 import json
-import os
-import pathlib
 import shutil
-import subprocess
 
 from ..tool_runtime import ToolContext
 from .calendar_domain import (
@@ -29,6 +26,15 @@ from .calendar_domain import (
     _event_from_payload,
     _rfc3339,
     _validate_interval,
+)
+from .gws_transport import (
+    GwsForbidden,
+    GwsInvalidResponse,
+    GwsRateLimited,
+    GwsTransport,
+    GwsTransportError,
+    GwsUnauthenticated,
+    GwsUnavailable,
 )
 
 GWS_EXECUTABLE = "gws"
@@ -51,7 +57,10 @@ class GwsCalendarProvider:
             raise ValueError("timeout must be positive")
         if max_output_bytes <= 0:
             raise ValueError("max_output_bytes must be positive")
-        self.executable = _resolve_executable(executable)
+        self.transport = GwsTransport(
+            executable=executable, timeout=timeout, max_output_bytes=max_output_bytes
+        )
+        self.executable = self.transport.executable
         self.timeout = timeout
         self.max_output_bytes = max_output_bytes
 
@@ -178,87 +187,41 @@ class GwsCalendarProvider:
     def _invoke(
         self, arguments: list[str], *, context: ToolContext | None
     ) -> dict[str, object]:
-        if context is not None:
-            context.check_cancelled()
-        if self.executable is None:
-            raise GoogleCalendarUnavailable("Google Calendar CLI is unavailable")
         try:
-            completed = subprocess.run(
-                [self.executable, *arguments],
-                capture_output=True,
-                check=False,
-                shell=False,
-                timeout=self.timeout,
+            return self.transport.invoke(
+                arguments,
+                allowed_commands={
+                    ("calendar", "events", "list", "--params"),
+                    ("calendar", "freebusy", "query", "--params"),
+                },
+                context=context,
             )
-        except subprocess.TimeoutExpired:
-            raise GoogleCalendarUnavailable("Google Calendar CLI timed out") from None
-        except OSError, subprocess.SubprocessError:
-            raise GoogleCalendarUnavailable(
-                "Google Calendar CLI is unavailable"
-            ) from None
-        if context is not None:
-            context.check_cancelled()
-        stdout = completed.stdout
-        stderr = completed.stderr
-        if not isinstance(stdout, bytes):
-            stdout = str(stdout).encode()
-        if not isinstance(stderr, bytes):
-            stderr = str(stderr).encode()
-        if len(stdout) > self.max_output_bytes or len(stderr) > self.max_output_bytes:
-            raise GoogleCalendarInvalidResponse("Google Calendar response is too large")
-        if completed.returncode != 0:
-            raise _error_from_cli_failure(stderr)
-        try:
-            payload = json.loads(stdout)
-        except UnicodeDecodeError, json.JSONDecodeError:
-            raise GoogleCalendarInvalidResponse(
-                "invalid Google Calendar CLI response"
-            ) from None
-        if not isinstance(payload, dict):
-            raise GoogleCalendarInvalidResponse("invalid Google Calendar CLI response")
-        return payload
-
-
-def _resolve_executable(executable: str | None) -> str | None:
-    if executable is not None:
-        path = pathlib.Path(executable)
-        if not path.is_absolute():
-            raise ValueError("gws executable must be an absolute path")
-        return str(path)
-    found = shutil.which(GWS_EXECUTABLE)
-    if found is None:
-        return None
-    return os.path.realpath(found)
+        except GwsTransportError as error:
+            raise _calendar_error(error) from None
 
 
 def _json_argument(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
-def _error_from_cli_failure(stderr: bytes) -> GoogleCalendarError:
-    """Map untrusted CLI diagnostics to the existing safe provider statuses."""
-    text = stderr[:4096].decode("utf-8", errors="ignore").casefold()
-    if any(
-        value in text
-        for value in (
-            "401",
-            "unauthorised",
-            "unauthorized",
-            "authentication",
-            "not authenticated",
-            "unauthenticated",
-            "auth required",
-            "no credentials",
-            "not logged in",
-            "login",
-        )
-    ):
-        return GoogleCalendarUnauthenticated("Google account is not authorised")
-    if any(value in text for value in ("403", "forbidden", "permission denied")):
-        return GoogleCalendarForbidden("Google Calendar access was denied")
-    if "429" in text or "rate limit" in text:
-        return GoogleCalendarRateLimited("Google Calendar rate limit reached")
-    return GoogleCalendarUnavailable("Google Calendar CLI request failed")
+def _compat_executable_lookup() -> str | None:
+    """Retain the module-level lookup seam used by Calendar integrations."""
+    return shutil.which(GWS_EXECUTABLE)
+
+
+def _calendar_error(error: GwsTransportError) -> GoogleCalendarError:
+    """Translate shared transport failures to Calendar-safe statuses."""
+    mapping: list[tuple[type[GwsTransportError], type[GoogleCalendarError]]] = [
+        (GwsUnauthenticated, GoogleCalendarUnauthenticated),
+        (GwsForbidden, GoogleCalendarForbidden),
+        (GwsRateLimited, GoogleCalendarRateLimited),
+        (GwsInvalidResponse, GoogleCalendarInvalidResponse),
+        (GwsUnavailable, GoogleCalendarUnavailable),
+    ]
+    for source, target in mapping:
+        if isinstance(error, source):
+            return target(str(error))
+    return GoogleCalendarUnavailable("Google Calendar is unavailable")
 
 
 __all__ = [
