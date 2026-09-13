@@ -30,6 +30,7 @@ class ToolStatus(StrEnum):
     FORBIDDEN = "forbidden"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
+    OUTCOME_UNKNOWN = "outcome_unknown"
     CANCELLED = "cancelled"
     INVALID_REQUEST = "invalid_request"
 

@@ -12,6 +12,7 @@ from ..tool_runtime import ToolContext
 from .gws_transport import (
     GwsForbidden,
     GwsInvalidResponse,
+    GwsOutcomeUnknown,
     GwsRateLimited,
     GwsTransport,
     GwsTransportError,
@@ -57,6 +58,10 @@ class GmailUnavailable(GmailError):
 
 class GmailInvalidResponse(GmailError):
     """Gmail returned an unusable response."""
+
+
+class GmailOutcomeUnknown(GmailError):
+    """A draft may have been created and must not be retried."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -139,7 +144,7 @@ class GwsGmailProvider:
     ) -> GmailMessage:
         """Read one message using a private ID supplied by the handle store."""
         _validate_private_id(message_id)
-        payload = self._invoke(
+        payload = self._invoke_read(
             [
                 "gmail",
                 "users",
@@ -170,7 +175,7 @@ class GwsGmailProvider:
         """Save one RFC822 message as an unsent Gmail draft."""
         if not raw_message or len(raw_message.encode()) > 64 * 1024:
             raise ValueError("draft is too large")
-        self._invoke(
+        self._invoke_mutation(
             [
                 "gmail",
                 "users",
@@ -189,11 +194,21 @@ class GwsGmailProvider:
     def close(self) -> None:
         """Release no resources; every request is an isolated process."""
 
-    def _invoke(
+    def _invoke_read(
         self, arguments: list[str], *, context: ToolContext | None
     ) -> dict[str, object]:
         try:
-            return self.transport.invoke(
+            return self.transport.invoke_read(
+                arguments, allowed_commands=_ALLOWED_COMMANDS, context=context
+            )
+        except GwsTransportError as error:
+            raise translate_gws_error(error) from None
+
+    def _invoke_mutation(
+        self, arguments: list[str], *, context: ToolContext | None
+    ) -> dict[str, object]:
+        try:
+            return self.transport.invoke_mutation(
                 arguments, allowed_commands=_ALLOWED_COMMANDS, context=context
             )
         except GwsTransportError as error:
@@ -202,7 +217,7 @@ class GwsGmailProvider:
     def _list_summaries(
         self, *, query: str, max_results: int, context: ToolContext | None
     ) -> list[GmailMessageSummary]:
-        payload = self._invoke(
+        payload = self._invoke_read(
             [
                 "gmail",
                 "users",
@@ -215,7 +230,7 @@ class GwsGmailProvider:
                         "q": query,
                         "maxResults": max_results,
                         "includeSpamTrash": False,
-                        "fields": "messages(id,threadId,snippet)",
+                        "fields": "messages(id,threadId)",
                     }
                 ),
                 "--format",
@@ -223,7 +238,9 @@ class GwsGmailProvider:
             ],
             context=context,
         )
-        items = payload.get("messages")
+        if "messages" not in payload:
+            return []
+        items = payload["messages"]
         if not isinstance(items, list):
             raise GmailInvalidResponse("invalid Gmail message list")
         summaries: list[GmailMessageSummary] = []
@@ -233,18 +250,54 @@ class GwsGmailProvider:
             message_id, thread_id = item.get("id"), item.get("threadId")
             if not isinstance(message_id, str) or not isinstance(thread_id, str):
                 raise GmailInvalidResponse("invalid Gmail message list")
-            message = self.read_message(message_id=message_id, context=context)
-            summaries.append(
-                GmailMessageSummary(
-                    message_id=message.message_id,
-                    thread_id=message.thread_id,
-                    subject=message.subject,
-                    sender=message.sender,
-                    received_at=message.received_at,
-                    snippet=_clean_text(str(item.get("snippet", "")))[:500],
-                )
-            )
+            summaries.append(self._get_summary(message_id=message_id, context=context))
         return summaries
+
+    def _get_summary(
+        self, *, message_id: str, context: ToolContext | None
+    ) -> GmailMessageSummary:
+        payload = self._invoke_read(
+            [
+                "gmail",
+                "users",
+                "messages",
+                "get",
+                "--params",
+                json_argument(
+                    {
+                        "userId": "me",
+                        "id": message_id,
+                        "format": "metadata",
+                        "metadataHeaders": ["Subject", "From", "Date"],
+                        "fields": "id,threadId,internalDate,snippet,payload(headers)",
+                    }
+                ),
+                "--format",
+                "json",
+            ],
+            context=context,
+        )
+        root = payload.get("payload")
+        if not isinstance(root, dict):
+            raise GmailInvalidResponse("invalid Gmail message")
+        headers = _headers(root.get("headers"))
+        received_at = _clean_header(headers.get("date", ""))
+        if not received_at:
+            raw_date = payload.get("internalDate")
+            received_at = (
+                _clean_text(str(raw_date))[:80] if raw_date is not None else ""
+            )
+        snippet = payload.get("snippet", "")
+        if not isinstance(snippet, str):
+            raise GmailInvalidResponse("invalid Gmail message snippet")
+        return GmailMessageSummary(
+            message_id=_required_string(payload, "id"),
+            thread_id=_required_string(payload, "threadId"),
+            subject=_clean_header(headers.get("subject", "")),
+            sender=_clean_header(headers.get("from", "")),
+            received_at=received_at,
+            snippet=_clean_text(snippet)[:500],
+        )
 
 
 def _message_from_payload(*, payload: dict[str, object]) -> GmailMessage:
@@ -315,10 +368,11 @@ def _extract_parts(root: dict[str, object]) -> tuple[str, list[GmailAttachment]]
 
 def _decode_body(value: str) -> str:
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode(
+        padded = (value + "=" * (-len(value) % 4)).encode("ascii")
+        return base64.b64decode(padded, altchars=b"-_", validate=True).decode(
             "utf-8", errors="replace"
         )
-    except ValueError, binascii.Error:
+    except UnicodeEncodeError, ValueError, binascii.Error:
         return ""
 
 
@@ -407,6 +461,7 @@ def translate_gws_error(error: GwsTransportError) -> GmailError:
         (GwsForbidden, GmailForbidden),
         (GwsRateLimited, GmailRateLimited),
         (GwsInvalidResponse, GmailInvalidResponse),
+        (GwsOutcomeUnknown, GmailOutcomeUnknown),
         (GwsUnavailable, GmailUnavailable),
     ]
     for source, target in mapping:
@@ -422,6 +477,7 @@ __all__ = [
     "GmailInvalidResponse",
     "GmailMessage",
     "GmailMessageSummary",
+    "GmailOutcomeUnknown",
     "GmailProvider",
     "GmailRateLimited",
     "GmailUnauthenticated",

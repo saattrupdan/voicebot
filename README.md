@@ -57,8 +57,10 @@ reads are limited to event listing and free/busy queries. The profile `dan` is b
 Google's `primary` calendar under the spoken alias `min kalender`.
 
 An authenticated `gws` installation is the sole Calendar and Gmail prerequisite. Gmail
-is enabled for the `dan` profile in the shipped configuration. Gmail tools can search or
-read bounded message summaries and save unsent drafts; they never send mail. Message
+is explicitly bound only to the `dan` profile under
+`integrations.gmail.profile_bindings` in the shipped configuration; unbound profiles
+fail closed. Gmail tools can search or read bounded message summaries and save unsent
+drafts; they never send mail. Message
 handles are short-lived, device-scoped process-local values, and attachments are never
 downloaded. The setup CLI does not log in to or disconnect the `gws` session. If `gws` is
 missing, unauthenticated, times out, or returns invalid JSON, Calendar tools fail closed

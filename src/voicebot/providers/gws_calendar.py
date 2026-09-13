@@ -188,7 +188,7 @@ class GwsCalendarProvider:
         self, arguments: list[str], *, context: ToolContext | None
     ) -> dict[str, object]:
         try:
-            return self.transport.invoke(
+            return self.transport.invoke_read(
                 arguments,
                 allowed_commands={
                     ("calendar", "events", "list", "--params"),
