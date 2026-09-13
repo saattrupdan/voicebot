@@ -266,7 +266,12 @@ def test_wake_word_path_works_outside_follow_up_window(
     assert np.array_equal(
         audio,
         np.concatenate(
-            [_chunk(2_000, size=320), _chunk(2_100, size=320), _chunk(0, size=320)]
+            [
+                _chunk(0, size=320),
+                _chunk(2_000, size=320),
+                _chunk(2_100, size=320),
+                _chunk(0, size=320),
+            ]
         ),
     )
     synthesiser.assert_called_once()
@@ -280,7 +285,6 @@ def test_acknowledgement_restarts_recorder_and_discards_self_audio(
     bot_audio = _chunk(9_000, size=320)
     first_session = [_chunk(2_000, size=320), bot_audio]
     second_session = [
-        _chunk(0, size=320),
         _chunk(2_000, size=320),
         _chunk(2_100, size=320),
         _chunk(0, size=320),
@@ -314,7 +318,7 @@ def test_acknowledgement_restarts_recorder_and_discards_self_audio(
             num_seconds_per_chunk=0.02,
             pre_roll_seconds=0.02,
             max_seconds_silence=0.08,
-            wake_word_seconds=0.02,
+            wake_word_seconds=1.0,
         ),
     )
 
@@ -324,21 +328,21 @@ def test_acknowledgement_restarts_recorder_and_discards_self_audio(
     first_recorder.delete.assert_called_once_with()
     assert events[:5] == ["start", "stop", "delete", "acknowledge", "start"]
     assert not np.any(audio == bot_audio[0])
-    assert np.any(audio == 2_000)
+    assert np.array_equal(
+        audio,
+        np.concatenate(
+            [_chunk(2_000, size=320), _chunk(2_100, size=320), _chunk(0, size=320)]
+        ),
+    )
 
 
-def test_post_wake_window_starts_after_ignored_frames(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Ignored startup frames do not consume the post-wake speech window."""
+def test_fresh_recorder_audio_is_not_discarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first samples after acknowledgement remain available for onset."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
     wake_frame = _chunk(2_000)
-    ignored_frames = [_chunk(0), _chunk(0)]
     speech_frames = [_chunk(2_000), _chunk(2_100), _chunk(0)]
     monkeypatch.setattr(
-        speech_recording,
-        "record",
-        _recorders([[wake_frame], ignored_frames + speech_frames]),
+        speech_recording, "record", _recorders([[wake_frame], speech_frames])
     )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
@@ -363,7 +367,7 @@ def test_post_wake_onset_at_aligned_deadline_is_accepted(
 ) -> None:
     """Speech may begin exactly where an aligned onset window ends."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
-    chunks = [_chunk(2_000), _chunk(0), _chunk(0), _chunk(2_000), _chunk(0)]
+    chunks = [_chunk(2_000), _chunk(0), _chunk(2_000), _chunk(0)]
     monkeypatch.setattr(
         speech_recording, "record", _recorders([chunks[:1], chunks[1:]])
     )
@@ -392,7 +396,6 @@ def test_post_wake_onset_just_before_non_aligned_deadline_is_accepted(
     detector = _detector(onset_frames=2, max_silence_frames=4)
     chunks = [
         _chunk(2_000),
-        _chunk(0),
         np.concatenate([_chunk(0, size=960), _chunk(2_000, size=320)]),
         np.concatenate([_chunk(2_000, size=320), _chunk(0, size=960)]),
         _chunk(0),
@@ -428,7 +431,6 @@ def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
     chunks = [
         _chunk(2_000),
         _chunk(0),
-        _chunk(0),
         np.concatenate(
             [_chunk(0, size=320), _chunk(2_000, size=640), _chunk(0, size=320)]
         ),
@@ -455,7 +457,7 @@ def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
     assert audio.size == 0
     assert started is None
     assert recorder.read.call_count == 1
-    assert fresh_recorder.read.call_count == 3
+    assert fresh_recorder.read.call_count == 2
     synthesiser.assert_called_once()
 
 
@@ -466,14 +468,7 @@ def test_post_wake_onset_window_expires_before_late_speech(
     detector = _detector(onset_frames=2, max_silence_frames=4)
     recorder = MagicMock()
     fresh_recorder = MagicMock()
-    frames = [
-        _chunk(2_000),
-        _chunk(0),
-        _chunk(100),
-        _chunk(100),
-        _chunk(100),
-        _chunk(2_000),
-    ]
+    frames = [_chunk(2_000), _chunk(100), _chunk(100), _chunk(100), _chunk(2_000)]
     monkeypatch.setattr(
         speech_recording,
         "record",
@@ -496,7 +491,7 @@ def test_post_wake_onset_window_expires_before_late_speech(
     assert audio.size == 0
     assert started is None
     assert recorder.read.call_count == 1
-    assert fresh_recorder.read.call_count == 4
+    assert fresh_recorder.read.call_count == 3
     assert wake_word.reset.call_count == 2
     synthesiser.assert_called_once()
 
@@ -571,6 +566,23 @@ def test_recorder_is_deleted_when_stop_fails(monkeypatch: pytest.MonkeyPatch) ->
 
     recorder.start.assert_called_once_with()
     recorder.stop.assert_called_once_with()
+    recorder.delete.assert_called_once_with()
+
+
+def test_recorder_is_deleted_when_start_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recorder which cannot start is deleted without being stopped."""
+    recorder = MagicMock()
+    recorder.start.side_effect = RuntimeError("start failed")
+    monkeypatch.setattr(
+        speech_recording, "PvRecorder", MagicMock(return_value=recorder)
+    )
+
+    with pytest.raises(RuntimeError, match="start failed"):
+        with speech_recording.record(chunk_size=1_280):
+            pass
+
+    recorder.start.assert_called_once_with()
+    recorder.stop.assert_not_called()
     recorder.delete.assert_called_once_with()
 
 
