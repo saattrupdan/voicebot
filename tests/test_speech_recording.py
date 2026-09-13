@@ -141,6 +141,9 @@ def _config(**overrides: object) -> DictConfig:
         "max_seconds_silence": 0.08,
         "max_seconds_audio": 2.0,
         "follow_up_max_seconds": 5.0,
+        "barge_in_confirmation_seconds": 0.6,
+        "barge_in_speech_start_snr": 4.0,
+        "barge_in_echo_similarity_threshold": 0.45,
         "play_back_audio": False,
         "wake_word_probability_threshold": 0.5,
         "wake_word_responses": ["Ja?"],
@@ -506,6 +509,7 @@ def test_barge_in_stops_playback_and_records_continued_speech(
     wake_word = MagicMock()
     synthesiser = MagicMock()
     synthesiser.is_playing = True
+    synthesiser.playback_echo_similarity.return_value = 0.1
     interrupted = MagicMock()
 
     audio, started = speech_recording.record_speech(
@@ -513,7 +517,7 @@ def test_barge_in_stops_playback_and_records_continued_speech(
         detector=detector,
         wake_word_model=wake_word,
         synthesiser=synthesiser,
-        cfg=_config(),
+        cfg=_config(barge_in_confirmation_seconds=0.16),
         force_follow_up=True,
         on_interrupt=interrupted,
     )
@@ -522,6 +526,75 @@ def test_barge_in_stops_playback_and_records_continued_speech(
     assert audio.size > 0
     synthesiser.stop.assert_called_once_with()
     interrupted.assert_called_once_with()
+    wake_word.predict.assert_not_called()
+
+
+@pytest.mark.parametrize("amplitude", [600, 6_000])
+def test_playback_leakage_does_not_trigger_barge_in(
+    monkeypatch: pytest.MonkeyPatch, amplitude: int
+) -> None:
+    """Correlated loudspeaker leakage is ignored independently of its gain."""
+    detector = _detector(
+        onset_frames=2, max_silence_frames=4, vad=_ThresholdVad(threshold=500.0)
+    )
+    frames = [
+        _chunk(amplitude),
+        _chunk(amplitude),
+        _chunk(amplitude),
+        _chunk(0),
+        np.empty(0, dtype=np.int16),
+    ]
+    monkeypatch.setattr(speech_recording, "record", _recorder(frames))
+    synthesiser = MagicMock()
+    synthesiser.is_playing = True
+    synthesiser.playback_echo_similarity.return_value = 0.9
+    interrupted = MagicMock()
+    wake_word = MagicMock()
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=synthesiser,
+        cfg=_config(barge_in_confirmation_seconds=0.16),
+        force_follow_up=True,
+        on_interrupt=interrupted,
+    )
+
+    assert started is None
+    assert audio.size == 0
+    synthesiser.stop.assert_not_called()
+    interrupted.assert_not_called()
+    wake_word.predict.assert_not_called()
+
+
+def test_brief_speech_does_not_trigger_barge_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short VAD onset must persist before it interrupts playback."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    frames = [_chunk(2_000), _chunk(0), _chunk(0), np.empty(0, dtype=np.int16)]
+    monkeypatch.setattr(speech_recording, "record", _recorder(frames))
+    synthesiser = MagicMock()
+    synthesiser.is_playing = True
+    synthesiser.playback_echo_similarity.return_value = 0.1
+    interrupted = MagicMock()
+    wake_word = MagicMock()
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=synthesiser,
+        cfg=_config(barge_in_confirmation_seconds=0.16),
+        force_follow_up=True,
+        on_interrupt=interrupted,
+    )
+
+    assert started is None
+    assert audio.size == 0
+    synthesiser.stop.assert_not_called()
+    interrupted.assert_not_called()
     wake_word.predict.assert_not_called()
 
 

@@ -402,9 +402,14 @@ def record_speech(
     recording = False
     armed_after_wake = False
     barge_in_candidate = False
+    barge_in_frames: list[np.ndarray] = []
     barge_in_samples = 0
-    barge_in_confirmation_samples = int(
-        float(cfg.get("barge_in_confirmation_seconds", 0.35)) * SAMPLE_RATE
+    barge_in_confirmation_samples = max(
+        1, math.ceil(float(cfg.get("barge_in_confirmation_seconds", 0.6)) * SAMPLE_RATE)
+    )
+    barge_in_speech_start_snr = float(cfg.get("barge_in_speech_start_snr", 4.0))
+    barge_in_echo_similarity_threshold = float(
+        cfg.get("barge_in_echo_similarity_threshold", 0.45)
     )
     interrupt_notified = False
 
@@ -428,15 +433,60 @@ def record_speech(
                         and not barge_in_candidate
                     ):
                         return np.empty(0, dtype=np.int16), None
-                    if barge_in_candidate:
-                        barge_in_samples += frame.size
-                        if barge_in_samples > barge_in_confirmation_samples:
-                            return np.empty(0, dtype=np.int16), None
                     post_wake_chunk_start = post_wake_samples
                     if armed_after_wake:
                         post_wake_samples += frame.size
 
-                    activity = detector.process_chunk(frame)
+                    playback_active = force_follow_up and synthesiser.is_playing
+                    activity = detector.process_chunk(
+                        frame, update_noise_floor=not playback_active
+                    )
+                    frame_rms = _rms(frame)
+                    barge_in_threshold = (
+                        detector.noise_floor * barge_in_speech_start_snr
+                    )
+                    echo_similarity = (
+                        synthesiser.playback_echo_similarity(
+                            audio=frame, sample_rate=SAMPLE_RATE
+                        )
+                        if playback_active
+                        else 0.0
+                    )
+                    probable_playback_echo = (
+                        echo_similarity >= barge_in_echo_similarity_threshold
+                    )
+
+                    if barge_in_candidate:
+                        if (
+                            activity.speech_detected
+                            and frame_rms >= barge_in_threshold
+                            and not probable_playback_echo
+                        ):
+                            barge_in_frames.append(frame)
+                            barge_in_samples += frame.size
+                            if barge_in_samples >= barge_in_confirmation_samples:
+                                logger.info(
+                                    "Confirmed barge-in, stopping the current response."
+                                )
+                                synthesiser.stop()
+                                if on_interrupt is not None and not interrupt_notified:
+                                    on_interrupt()
+                                    interrupt_notified = True
+                                recording = True
+                                barge_in_candidate = False
+                                wake_word_model.reset()
+                                audio_start = dt.datetime.now()
+                                frames.extend(barge_in_frames)
+                                barge_in_frames.clear()
+                            continue
+
+                        detector.reset_activity()
+                        barge_in_candidate = False
+                        barge_in_frames.clear()
+                        barge_in_samples = 0
+                        pre_roll.clear()
+                        continue
+
                     if not detector.active and pre_roll_chunks:
                         pre_roll.append(frame)
 
@@ -461,23 +511,21 @@ def record_speech(
                             < float(cfg.follow_up_max_seconds)
                         )
                         if follow_up or armed_after_wake:
-                            if (
-                                force_follow_up
-                                and synthesiser.is_playing
-                                and not barge_in_candidate
-                            ):
+                            if playback_active:
+                                if (
+                                    frame_rms < barge_in_threshold
+                                    or probable_playback_echo
+                                ):
+                                    detector.reset_activity()
+                                    pre_roll.clear()
+                                    continue
                                 logger.info(
-                                    "Possible barge-in detected, stopping playback."
+                                    "Possible barge-in detected; confirming speech."
                                 )
-                                synthesiser.stop()
-                                if on_interrupt is not None and not interrupt_notified:
-                                    on_interrupt()
-                                    interrupt_notified = True
-                                detector.reset_activity()
                                 pre_roll.clear()
-                                pre_roll.append(frame)
                                 barge_in_candidate = True
-                                barge_in_samples = 0
+                                barge_in_frames = [frame]
+                                barge_in_samples = frame.size
                                 continue
 
                             logger.info(
@@ -511,6 +559,9 @@ def record_speech(
                             detector.reset_activity()
                             wake_word_model.reset()
                             return np.empty(0, dtype=np.int16), None
+                        continue
+
+                    if force_follow_up and not recording:
                         continue
 
                     if not recording:

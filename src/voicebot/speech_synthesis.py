@@ -57,12 +57,55 @@ class SpeechSynthesiser:
         self._active_cancel: threading.Event | None = None
         self._active_response: object | None = None
         self._active_output: object | None = None
+        self._playback_reference = np.empty(0, dtype=np.float64)
         self._playing = threading.Event()
 
     @property
     def is_playing(self) -> bool:
         """Return whether synthesised audio is currently playing."""
         return self._playing.is_set()
+
+    def playback_echo_similarity(self, audio: np.ndarray, sample_rate: int) -> float:
+        """Return the strongest correlation with recently emitted audio.
+
+        Args:
+            audio:
+                Mono microphone samples.
+            sample_rate:
+                Sample rate of the microphone audio.
+
+        Returns:
+            Absolute normalised correlation from zero to one.
+        """
+        microphone = self._resample(
+            samples=audio.astype(np.float64),
+            source_rate=sample_rate,
+            target_rate=self.sample_rate,
+        )
+        with self._state_lock:
+            reference = self._playback_reference.copy()
+        if microphone.size < 2 or reference.size < microphone.size:
+            return 0.0
+
+        microphone -= float(np.mean(microphone))
+        microphone_energy = float(np.sum(np.square(microphone)))
+        if microphone_energy <= 0.0:
+            return 0.0
+
+        window_size = microphone.size
+        cumulative = np.concatenate(([0.0], np.cumsum(reference)))
+        cumulative_squares = np.concatenate(([0.0], np.cumsum(np.square(reference))))
+        window_sums = cumulative[window_size:] - cumulative[:-window_size]
+        window_square_sums = (
+            cumulative_squares[window_size:] - cumulative_squares[:-window_size]
+        )
+        window_energies = window_square_sums - np.square(window_sums) / window_size
+        correlations = np.correlate(reference, microphone, mode="valid")
+        denominators = np.sqrt(np.maximum(window_energies, 0.0) * microphone_energy)
+        valid = denominators > 0.0
+        if not np.any(valid):
+            return 0.0
+        return float(np.max(np.abs(correlations[valid] / denominators[valid])))
 
     def synthesise(
         self, text: str, cancel_event: threading.Event | None = None
@@ -100,6 +143,7 @@ class SpeechSynthesiser:
                     self._active_cancel = None
                     self._active_response = None
                     self._active_output = None
+                    self._playback_reference = np.empty(0, dtype=np.float64)
 
     def stop(self) -> None:
         """Stop active generation and playback as soon as possible."""
@@ -143,8 +187,14 @@ class SpeechSynthesiser:
                         complete_bytes = len(audio) - len(audio) % 2
                         remainder = audio[complete_bytes:]
                         if complete_bytes:
+                            output_audio = audio[:complete_bytes]
+                            self._update_playback_reference(
+                                audio=output_audio,
+                                sample_rate=self.sample_rate,
+                                channels=PCM_CHANNELS,
+                            )
                             self._playing.set()
-                            output.write(audio[:complete_bytes])
+                            output.write(output_audio)
                             emitted_audio = True
                 finally:
                     if self._is_cancelled(
@@ -205,6 +255,11 @@ class SpeechSynthesiser:
                     audio = wav_file.readframes(PCM_CHUNK_BYTES // 2)
                     if not audio:
                         break
+                    self._update_playback_reference(
+                        audio=audio,
+                        sample_rate=wav_file.getframerate(),
+                        channels=wav_file.getnchannels(),
+                    )
                     self._playing.set()
                     output.write(audio)
             finally:
@@ -219,6 +274,37 @@ class SpeechSynthesiser:
         if self._is_cancelled(local_cancel=local_cancel, cancel_event=cancel_event):
             return PlaybackOutcome.CANCELLED
         return PlaybackOutcome.COMPLETE
+
+    def _update_playback_reference(
+        self, audio: bytes, sample_rate: int, channels: int
+    ) -> None:
+        """Retain recent output samples for gain-invariant echo matching."""
+        samples = np.frombuffer(audio, dtype=np.int16).astype(np.float64)
+        if channels > 1:
+            complete_samples = samples.size - samples.size % channels
+            samples = samples[:complete_samples].reshape(-1, channels).mean(axis=1)
+        samples = self._resample(
+            samples=samples, source_rate=sample_rate, target_rate=self.sample_rate
+        )
+        max_samples = int(self.sample_rate * 1.5)
+        with self._state_lock:
+            self._playback_reference = np.concatenate(
+                (self._playback_reference, samples)
+            )[-max_samples:]
+
+    @staticmethod
+    def _resample(
+        samples: np.ndarray, source_rate: int, target_rate: int
+    ) -> np.ndarray:
+        """Linearly resample mono audio while preserving its duration."""
+        if samples.size == 0 or source_rate == target_rate:
+            return samples
+        target_size = max(1, round(samples.size * target_rate / source_rate))
+        source_positions = np.arange(samples.size, dtype=np.float64)
+        target_positions = np.arange(target_size, dtype=np.float64) * (
+            source_rate / target_rate
+        )
+        return np.interp(target_positions, source_positions, samples)
 
     @staticmethod
     def _is_cancelled(

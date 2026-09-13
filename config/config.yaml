@@ -19,7 +19,9 @@ max_seconds_silence: 0.8
 post_wake_max_seconds: 2.0
 max_seconds_audio: 10.0
 follow_up_max_seconds: 5.0
-barge_in_confirmation_seconds: 0.35
+barge_in_confirmation_seconds: 0.6
+barge_in_speech_start_snr: 4.0
+barge_in_echo_similarity_threshold: 0.45
 play_back_audio: false
 
 # Wake word detection parameters
