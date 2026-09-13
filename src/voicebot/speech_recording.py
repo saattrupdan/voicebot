@@ -413,135 +413,150 @@ def record_speech(
         "Listening for speech..." if force_follow_up else "Listening for wakeword..."
     )
     try:
-        with record(chunk_size=chunk_size) as recorder:
-            while True:
-                frame = _as_int16(np.asarray(recorder.read()))
-                if frame.size == 0:
-                    break
-                if (
-                    stop_event is not None
-                    and stop_event.is_set()
-                    and not recording
-                    and not barge_in_candidate
-                ):
-                    return np.empty(0, dtype=np.int16), None
-                if barge_in_candidate:
-                    barge_in_samples += frame.size
-                    if barge_in_samples > barge_in_confirmation_samples:
+        while True:
+            restart_after_acknowledgement = False
+            wake_word_response: str | None = None
+            # Close this lifecycle before playback so its buffered audio is discarded.
+            with record(chunk_size=chunk_size) as recorder:
+                while True:
+                    frame = _as_int16(np.asarray(recorder.read()))
+                    if frame.size == 0:
+                        break
+                    if (
+                        stop_event is not None
+                        and stop_event.is_set()
+                        and not recording
+                        and not barge_in_candidate
+                    ):
                         return np.empty(0, dtype=np.int16), None
-                if frames_left_to_ignore:
-                    detector.process_chunk(frame, update_noise_floor=False)
-                    frames_left_to_ignore -= 1
-                    if frames_left_to_ignore == 0:
-                        detector.reset_activity()
-                        pre_roll.clear()
-                    continue
-
-                post_wake_chunk_start = post_wake_samples
-                if armed_after_wake:
-                    post_wake_samples += frame.size
-
-                activity = detector.process_chunk(frame)
-                if not detector.active and pre_roll_chunks:
-                    pre_roll.append(frame)
-
-                if activity.onset:
-                    if armed_after_wake:
-                        onset_offset = activity.onset_sample_offset
-                        if (
-                            onset_offset is None
-                            or post_wake_chunk_start + onset_offset
-                            > post_wake_onset_samples
-                        ):
-                            detector.reset_activity()
-                            wake_word_model.reset()
+                    if barge_in_candidate:
+                        barge_in_samples += frame.size
+                        if barge_in_samples > barge_in_confirmation_samples:
                             return np.empty(0, dtype=np.int16), None
+                    if frames_left_to_ignore:
+                        detector.process_chunk(frame, update_noise_floor=False)
+                        frames_left_to_ignore -= 1
+                        if frames_left_to_ignore == 0:
+                            detector.reset_activity()
+                            pre_roll.clear()
+                        continue
 
-                    seconds_since_last_response = (
-                        dt.datetime.now() - last_response_time
-                    ).total_seconds()
-                    follow_up = force_follow_up or seconds_since_last_response < float(
-                        cfg.follow_up_max_seconds
-                    )
-                    if follow_up or armed_after_wake:
-                        if (
+                    post_wake_chunk_start = post_wake_samples
+                    if armed_after_wake:
+                        post_wake_samples += frame.size
+
+                    activity = detector.process_chunk(frame)
+                    if not detector.active and pre_roll_chunks:
+                        pre_roll.append(frame)
+
+                    if activity.onset:
+                        if armed_after_wake:
+                            onset_offset = activity.onset_sample_offset
+                            if (
+                                onset_offset is None
+                                or post_wake_chunk_start + onset_offset
+                                > post_wake_onset_samples
+                            ):
+                                detector.reset_activity()
+                                wake_word_model.reset()
+                                return np.empty(0, dtype=np.int16), None
+
+                        seconds_since_last_response = (
+                            dt.datetime.now() - last_response_time
+                        ).total_seconds()
+                        follow_up = (
                             force_follow_up
-                            and synthesiser.is_playing
-                            and not barge_in_candidate
-                        ):
+                            or seconds_since_last_response
+                            < float(cfg.follow_up_max_seconds)
+                        )
+                        if follow_up or armed_after_wake:
+                            if (
+                                force_follow_up
+                                and synthesiser.is_playing
+                                and not barge_in_candidate
+                            ):
+                                logger.info(
+                                    "Possible barge-in detected, stopping playback."
+                                )
+                                synthesiser.stop()
+                                if on_interrupt is not None and not interrupt_notified:
+                                    on_interrupt()
+                                    interrupt_notified = True
+                                detector.reset_activity()
+                                pre_roll.clear()
+                                pre_roll.append(frame)
+                                barge_in_candidate = True
+                                barge_in_samples = 0
+                                continue
+
                             logger.info(
-                                "Possible barge-in detected, stopping playback."
+                                "Follow-up detected!"
+                                if follow_up
+                                else "Speech detected!"
                             )
-                            synthesiser.stop()
                             if on_interrupt is not None and not interrupt_notified:
                                 on_interrupt()
                                 interrupt_notified = True
-                            detector.reset_activity()
-                            pre_roll.clear()
-                            pre_roll.append(frame)
-                            barge_in_candidate = True
-                            barge_in_samples = 0
+                            recording = True
+                            barge_in_candidate = False
+                            armed_after_wake = False
+                            wake_word_model.reset()
+                            audio_start = dt.datetime.now()
+                            frames.extend(pre_roll)
+                            frames.append(frame)
+                            if sum(len(item) for item in frames) >= max_audio_samples:
+                                break
                             continue
 
-                        logger.info(
-                            "Follow-up detected!" if follow_up else "Speech detected!"
-                        )
-                        if on_interrupt is not None and not interrupt_notified:
-                            on_interrupt()
-                            interrupt_notified = True
-                        recording = True
-                        barge_in_candidate = False
-                        armed_after_wake = False
-                        wake_word_model.reset()
-                        audio_start = dt.datetime.now()
-                        frames.extend(pre_roll)
-                        frames.append(frame)
-                        if sum(len(item) for item in frames) >= max_audio_samples:
-                            break
-                        continue
-
-                if armed_after_wake:
-                    candidate_offset = activity.candidate_sample_offset
-                    if candidate_offset is not None:
-                        candidate_start = post_wake_chunk_start + candidate_offset
-                        if candidate_start > post_wake_onset_samples:
+                    if armed_after_wake:
+                        candidate_offset = activity.candidate_sample_offset
+                        if candidate_offset is not None:
+                            candidate_start = post_wake_chunk_start + candidate_offset
+                            if candidate_start > post_wake_onset_samples:
+                                detector.reset_activity()
+                                wake_word_model.reset()
+                                return np.empty(0, dtype=np.int16), None
+                        elif post_wake_samples > post_wake_onset_samples:
                             detector.reset_activity()
                             wake_word_model.reset()
                             return np.empty(0, dtype=np.int16), None
-                    elif post_wake_samples > post_wake_onset_samples:
-                        detector.reset_activity()
-                        wake_word_model.reset()
-                        return np.empty(0, dtype=np.int16), None
-                    continue
-
-                if not recording:
-                    wake_word_prediction_dict = wake_word_model.predict(x=frame)
-                    assert isinstance(wake_word_prediction_dict, dict)
-                    wake_word_probability = wake_word_prediction_dict["hey_jarvis"]
-                    if wake_word_probability >= cfg.wake_word_probability_threshold:
-                        logger.info("Wakeword detected!")
-                        wake_word_response = rng.choice(cfg.wake_word_responses)
-                        synthesise_speech(
-                            text=wake_word_response, synthesiser=synthesiser
-                        )
-                        wake_word_model.reset()
-                        detector.reset_activity()
-                        pre_roll.clear()
-                        armed_after_wake = True
-                        post_wake_samples = 0
-                        frames_left_to_ignore = max(
-                            1, math.ceil(float(cfg.wake_word_seconds) / chunk_seconds)
-                        )
                         continue
 
-                if activity.ended:
-                    break
+                    if not recording:
+                        wake_word_prediction_dict = wake_word_model.predict(x=frame)
+                        assert isinstance(wake_word_prediction_dict, dict)
+                        wake_word_probability = wake_word_prediction_dict["hey_jarvis"]
+                        if wake_word_probability >= cfg.wake_word_probability_threshold:
+                            logger.info("Wakeword detected!")
+                            wake_word_response = str(
+                                rng.choice(cfg.wake_word_responses)
+                            )
+                            restart_after_acknowledgement = True
+                            break
 
-                if recording and detector.active:
-                    frames.append(frame)
-                    if sum(len(item) for item in frames) >= max_audio_samples:
-                        logger.info("Max audio length reached, stopping.")
+                    if activity.ended:
                         break
+
+                    if recording and detector.active:
+                        frames.append(frame)
+                        if sum(len(item) for item in frames) >= max_audio_samples:
+                            logger.info("Max audio length reached, stopping.")
+                            break
+
+            if restart_after_acknowledgement:
+                assert wake_word_response is not None
+                synthesise_speech(text=wake_word_response, synthesiser=synthesiser)
+                # Start the post-wake clock only after playback and its discard period.
+                wake_word_model.reset()
+                detector.reset_activity()
+                pre_roll.clear()
+                armed_after_wake = True
+                post_wake_samples = 0
+                frames_left_to_ignore = max(
+                    1, math.ceil(float(cfg.wake_word_seconds) / chunk_seconds)
+                )
+                continue
+            break
     finally:
         detector.reset_activity()
 

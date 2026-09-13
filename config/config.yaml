@@ -23,7 +23,7 @@ barge_in_confirmation_seconds: 0.35
 play_back_audio: false
 
 # Wake word detection parameters
-wake_word_probability_threshold: 0.5
+wake_word_probability_threshold: 0.45
 wake_word_responses:
   - Ja?
   - Hvad så?
