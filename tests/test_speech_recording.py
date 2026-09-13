@@ -150,15 +150,34 @@ def _config(**overrides: object) -> DictConfig:
     return OmegaConf.create(values)
 
 
-def _recorder(frames: list[np.ndarray], recorder: MagicMock | None = None) -> object:
+def _recorders(
+    sessions: list[list[np.ndarray]],
+    recorders: list[MagicMock] | None = None,
+    events: list[str] | None = None,
+) -> object:
+    session_iter = iter(sessions)
+    recorder_iter = iter(recorders or [])
+
     @contextmanager
     def context(chunk_size: int) -> Iterator[MagicMock]:
         del chunk_size
-        active_recorder = recorder or MagicMock()
-        active_recorder.read.side_effect = frames
-        yield active_recorder
+        active_recorder = next(recorder_iter, MagicMock())
+        active_recorder.read.side_effect = next(session_iter)
+        if events is not None:
+            events.append("start")
+        try:
+            yield active_recorder
+        finally:
+            active_recorder.stop()
+            active_recorder.delete()
+            if events is not None:
+                events.extend(("stop", "delete"))
 
     return context
+
+
+def _recorder(frames: list[np.ndarray], recorder: MagicMock | None = None) -> object:
+    return _recorders([frames], [recorder] if recorder is not None else None)
 
 
 def test_record_speech_preserves_exact_pre_roll(
@@ -222,7 +241,9 @@ def test_wake_word_path_works_outside_follow_up_window(
         _chunk(0, size=320),
         _chunk(0, size=320),
     ]
-    monkeypatch.setattr(speech_recording, "record", _recorder(frames))
+    monkeypatch.setattr(
+        speech_recording, "record", _recorders([frames[:1], frames[1:]])
+    )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
     synthesiser = MagicMock()
@@ -251,13 +272,101 @@ def test_wake_word_path_works_outside_follow_up_window(
     synthesiser.assert_called_once()
 
 
+def test_acknowledgement_restarts_recorder_and_discards_self_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Playback closes the old recorder before a clean recorder is started."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    bot_audio = _chunk(9_000, size=320)
+    first_session = [_chunk(2_000, size=320), bot_audio]
+    second_session = [
+        _chunk(0, size=320),
+        _chunk(2_000, size=320),
+        _chunk(2_100, size=320),
+        _chunk(0, size=320),
+        np.empty(0, dtype=np.int16),
+    ]
+    first_recorder = MagicMock()
+    second_recorder = MagicMock()
+    events: list[str] = []
+    monkeypatch.setattr(
+        speech_recording,
+        "record",
+        _recorders(
+            [first_session, second_session], [first_recorder, second_recorder], events
+        ),
+    )
+    wake_word = MagicMock()
+    wake_word.predict.return_value = {"hey_jarvis": 1.0}
+
+    def acknowledge(*, text: str, synthesiser: MagicMock) -> None:
+        del text, synthesiser
+        events.append("acknowledge")
+
+    monkeypatch.setattr(speech_recording, "synthesise_speech", acknowledge)
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=MagicMock(),
+        cfg=_config(
+            num_seconds_per_chunk=0.02,
+            pre_roll_seconds=0.02,
+            max_seconds_silence=0.08,
+            wake_word_seconds=0.02,
+        ),
+    )
+
+    assert started is not None
+    assert first_recorder.read.call_count == 1
+    first_recorder.stop.assert_called_once_with()
+    first_recorder.delete.assert_called_once_with()
+    assert events[:5] == ["start", "stop", "delete", "acknowledge", "start"]
+    assert not np.any(audio == bot_audio[0])
+    assert np.any(audio == 2_000)
+
+
+def test_post_wake_window_starts_after_ignored_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ignored startup frames do not consume the post-wake speech window."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    wake_frame = _chunk(2_000)
+    ignored_frames = [_chunk(0), _chunk(0)]
+    speech_frames = [_chunk(2_000), _chunk(2_100), _chunk(0)]
+    monkeypatch.setattr(
+        speech_recording,
+        "record",
+        _recorders([[wake_frame], ignored_frames + speech_frames]),
+    )
+    wake_word = MagicMock()
+    wake_word.predict.return_value = {"hey_jarvis": 1.0}
+    synthesiser = MagicMock()
+    monkeypatch.setattr(speech_recording, "synthesise_speech", synthesiser)
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=wake_word,
+        synthesiser=MagicMock(),
+        cfg=_config(post_wake_max_seconds=0.08, wake_word_seconds=0.16),
+    )
+
+    assert started is not None
+    assert audio.size > 0
+    synthesiser.assert_called_once()
+
+
 def test_post_wake_onset_at_aligned_deadline_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Speech may begin exactly where an aligned onset window ends."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
     chunks = [_chunk(2_000), _chunk(0), _chunk(0), _chunk(2_000), _chunk(0)]
-    monkeypatch.setattr(speech_recording, "record", _recorder(chunks))
+    monkeypatch.setattr(
+        speech_recording, "record", _recorders([chunks[:1], chunks[1:]])
+    )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
     synthesiser = MagicMock()
@@ -288,7 +397,9 @@ def test_post_wake_onset_just_before_non_aligned_deadline_is_accepted(
         np.concatenate([_chunk(2_000, size=320), _chunk(0, size=960)]),
         _chunk(0),
     ]
-    monkeypatch.setattr(speech_recording, "record", _recorder(chunks))
+    monkeypatch.setattr(
+        speech_recording, "record", _recorders([chunks[:1], chunks[1:]])
+    )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
     synthesiser = MagicMock()
@@ -313,6 +424,7 @@ def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
     """A candidate beginning just after the deadline is rejected immediately."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
     recorder = MagicMock()
+    fresh_recorder = MagicMock()
     chunks = [
         _chunk(2_000),
         _chunk(0),
@@ -322,7 +434,9 @@ def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
         ),
     ]
     monkeypatch.setattr(
-        speech_recording, "record", _recorder(chunks, recorder=recorder)
+        speech_recording,
+        "record",
+        _recorders([chunks[:1], chunks[1:]], [recorder, fresh_recorder]),
     )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
@@ -340,7 +454,8 @@ def test_post_wake_onset_just_after_non_aligned_deadline_is_rejected(
     assert audio.dtype == np.int16
     assert audio.size == 0
     assert started is None
-    assert recorder.read.call_count == 4
+    assert recorder.read.call_count == 1
+    assert fresh_recorder.read.call_count == 3
     synthesiser.assert_called_once()
 
 
@@ -350,6 +465,7 @@ def test_post_wake_onset_window_expires_before_late_speech(
     """Speech after the post-acknowledgement deadline needs a new wake word."""
     detector = _detector(onset_frames=2, max_silence_frames=4)
     recorder = MagicMock()
+    fresh_recorder = MagicMock()
     frames = [
         _chunk(2_000),
         _chunk(0),
@@ -359,7 +475,9 @@ def test_post_wake_onset_window_expires_before_late_speech(
         _chunk(2_000),
     ]
     monkeypatch.setattr(
-        speech_recording, "record", _recorder(frames, recorder=recorder)
+        speech_recording,
+        "record",
+        _recorders([frames[:1], frames[1:]], [recorder, fresh_recorder]),
     )
     wake_word = MagicMock()
     wake_word.predict.return_value = {"hey_jarvis": 1.0}
@@ -377,7 +495,8 @@ def test_post_wake_onset_window_expires_before_late_speech(
     assert audio.dtype == np.int16
     assert audio.size == 0
     assert started is None
-    assert recorder.read.call_count == 5
+    assert recorder.read.call_count == 1
+    assert fresh_recorder.read.call_count == 4
     assert wake_word.reset.call_count == 2
     synthesiser.assert_called_once()
 
