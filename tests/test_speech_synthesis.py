@@ -41,13 +41,16 @@ def test_synthesiser_streams_plapre_pcm(monkeypatch: pytest.MonkeyPatch) -> None
     output.close.assert_called_once_with()
 
 
-def test_playback_echo_similarity_is_gain_invariant(
+def test_playback_echo_assessment_preserves_unrelated_speech(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Playback correlation identifies scaled echo but not unrelated speech."""
+    """Echo removal handles gain, delay, filtering, and mixed user speech."""
     rng = np.random.default_rng(42)
     playback = rng.integers(-8_000, 8_001, size=2_048, dtype=np.int16)
-    echo = (playback[256:1_792] // 4).astype(np.int16)
+    filtered = np.convolve(
+        playback.astype(np.float64), np.array([0.6, 0.3, 0.1]), mode="same"
+    )
+    echo = (filtered[256:1_792] / 4).astype(np.int16)
     unrelated = rng.integers(-8_000, 8_001, size=echo.size, dtype=np.int16)
     mixed_speech = np.clip(
         echo.astype(np.int32) + unrelated.astype(np.int32), -32_768, 32_767
@@ -65,16 +68,16 @@ def test_playback_echo_similarity_is_gain_invariant(
     synthesiser = speech_synthesis.SpeechSynthesiser(
         client=client, model="syvai/plapre-nano", voice="tor"
     )
-    similarities: list[float] = []
+    assessments: list[tuple[float, float]] = []
 
     def inspect_reference(_: bytes) -> None:
-        similarities.extend(
+        assessments.extend(
             [
-                synthesiser.playback_echo_similarity(audio=echo, sample_rate=24_000),
-                synthesiser.playback_echo_similarity(
+                synthesiser.playback_echo_assessment(audio=echo, sample_rate=24_000),
+                synthesiser.playback_echo_assessment(
                     audio=unrelated, sample_rate=24_000
                 ),
-                synthesiser.playback_echo_similarity(
+                synthesiser.playback_echo_assessment(
                     audio=mixed_speech, sample_rate=24_000
                 ),
             ]
@@ -83,12 +86,16 @@ def test_playback_echo_similarity_is_gain_invariant(
     output.write.side_effect = inspect_reference
 
     assert synthesiser.synthesise(text="Hej.") is PlaybackOutcome.COMPLETE
-    assert similarities[0] == pytest.approx(1.0, abs=0.001)
-    assert similarities[1] < 0.1
-    assert similarities[2] < 0.45
-    assert (
-        synthesiser.playback_echo_similarity(audio=playback, sample_rate=24_000) == 0.0
+    assert assessments[0][0] > 0.8
+    assert assessments[0][1] < 10.0
+    assert assessments[1][0] < 0.1
+    assert assessments[1][1] > 4_000.0
+    assert assessments[2][1] > 4_000.0
+    similarity, residual_rms = synthesiser.playback_echo_assessment(
+        audio=playback, sample_rate=24_000
     )
+    assert similarity == 0.0
+    assert residual_rms > 4_000.0
 
 
 def test_synthesiser_stops_streamed_playback(monkeypatch: pytest.MonkeyPatch) -> None:

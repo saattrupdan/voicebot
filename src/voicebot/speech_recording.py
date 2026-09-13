@@ -405,12 +405,10 @@ def record_speech(
     barge_in_frames: list[np.ndarray] = []
     barge_in_samples = 0
     barge_in_confirmation_samples = max(
-        1, math.ceil(float(cfg.get("barge_in_confirmation_seconds", 0.6)) * SAMPLE_RATE)
+        1,
+        math.ceil(float(cfg.get("barge_in_confirmation_seconds", 0.16)) * SAMPLE_RATE),
     )
-    barge_in_speech_start_snr = float(cfg.get("barge_in_speech_start_snr", 4.0))
-    barge_in_echo_similarity_threshold = float(
-        cfg.get("barge_in_echo_similarity_threshold", 0.45)
-    )
+    barge_in_speech_start_snr = float(cfg.get("barge_in_speech_start_snr", 2.5))
     interrupt_notified = False
 
     logger.info(
@@ -445,22 +443,18 @@ def record_speech(
                     barge_in_threshold = (
                         detector.noise_floor * barge_in_speech_start_snr
                     )
-                    echo_similarity = (
-                        synthesiser.playback_echo_similarity(
+                    _, non_echo_rms = (
+                        synthesiser.playback_echo_assessment(
                             audio=frame, sample_rate=SAMPLE_RATE
                         )
                         if playback_active
-                        else 0.0
-                    )
-                    probable_playback_echo = (
-                        echo_similarity >= barge_in_echo_similarity_threshold
+                        else (0.0, frame_rms)
                     )
 
                     if barge_in_candidate:
                         if (
                             activity.speech_detected
-                            and frame_rms >= barge_in_threshold
-                            and not probable_playback_echo
+                            and non_echo_rms >= barge_in_threshold
                         ):
                             barge_in_frames.append(frame)
                             barge_in_samples += frame.size
@@ -512,10 +506,7 @@ def record_speech(
                         )
                         if follow_up or armed_after_wake:
                             if playback_active:
-                                if (
-                                    frame_rms < barge_in_threshold
-                                    or probable_playback_echo
-                                ):
+                                if non_echo_rms < barge_in_threshold:
                                     detector.reset_activity()
                                     pre_roll.clear()
                                     continue

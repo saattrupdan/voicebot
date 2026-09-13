@@ -141,9 +141,8 @@ def _config(**overrides: object) -> DictConfig:
         "max_seconds_silence": 0.08,
         "max_seconds_audio": 2.0,
         "follow_up_max_seconds": 5.0,
-        "barge_in_confirmation_seconds": 0.6,
-        "barge_in_speech_start_snr": 4.0,
-        "barge_in_echo_similarity_threshold": 0.45,
+        "barge_in_confirmation_seconds": 0.16,
+        "barge_in_speech_start_snr": 2.5,
         "play_back_audio": False,
         "wake_word_probability_threshold": 0.5,
         "wake_word_responses": ["Ja?"],
@@ -509,7 +508,7 @@ def test_barge_in_stops_playback_and_records_continued_speech(
     wake_word = MagicMock()
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_similarity.return_value = 0.1
+    synthesiser.playback_echo_assessment.return_value = (0.8, 2_000.0)
     interrupted = MagicMock()
 
     audio, started = speech_recording.record_speech(
@@ -547,7 +546,7 @@ def test_playback_leakage_does_not_trigger_barge_in(
     monkeypatch.setattr(speech_recording, "record", _recorder(frames))
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_similarity.return_value = 0.9
+    synthesiser.playback_echo_assessment.return_value = (0.9, 100.0)
     interrupted = MagicMock()
     wake_word = MagicMock()
 
@@ -577,7 +576,7 @@ def test_brief_speech_does_not_trigger_barge_in(
     monkeypatch.setattr(speech_recording, "record", _recorder(frames))
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_similarity.return_value = 0.1
+    synthesiser.playback_echo_assessment.return_value = (0.1, 2_000.0)
     interrupted = MagicMock()
     wake_word = MagicMock()
 

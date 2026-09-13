@@ -65,8 +65,10 @@ class SpeechSynthesiser:
         """Return whether synthesised audio is currently playing."""
         return self._playing.is_set()
 
-    def playback_echo_similarity(self, audio: np.ndarray, sample_rate: int) -> float:
-        """Return the strongest correlation with recently emitted audio.
+    def playback_echo_assessment(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> tuple[float, float]:
+        """Measure playback similarity and unexplained microphone energy.
 
         Args:
             audio:
@@ -75,22 +77,26 @@ class SpeechSynthesiser:
                 Sample rate of the microphone audio.
 
         Returns:
-            Absolute normalised correlation from zero to one.
+            Strongest playback correlation and residual RMS after subtracting a
+            short fitted echo path. The residual retains unrelated user speech.
         """
         microphone = self._resample(
             samples=audio.astype(np.float64),
             source_rate=sample_rate,
             target_rate=self.sample_rate,
         )
+        microphone -= float(np.mean(microphone)) if microphone.size else 0.0
+        microphone_rms = (
+            float(np.sqrt(np.mean(np.square(microphone)))) if microphone.size else 0.0
+        )
         with self._state_lock:
             reference = self._playback_reference.copy()
-        if microphone.size < 2 or reference.size < microphone.size:
-            return 0.0
+        if microphone.size < 4 or reference.size < microphone.size:
+            return 0.0, microphone_rms
 
-        microphone -= float(np.mean(microphone))
         microphone_energy = float(np.sum(np.square(microphone)))
         if microphone_energy <= 0.0:
-            return 0.0
+            return 0.0, 0.0
 
         window_size = microphone.size
         cumulative = np.concatenate(([0.0], np.cumsum(reference)))
@@ -104,8 +110,28 @@ class SpeechSynthesiser:
         denominators = np.sqrt(np.maximum(window_energies, 0.0) * microphone_energy)
         valid = denominators > 0.0
         if not np.any(valid):
-            return 0.0
-        return float(np.max(np.abs(correlations[valid] / denominators[valid])))
+            return 0.0, microphone_rms
+
+        scores = np.zeros_like(correlations)
+        scores[valid] = np.abs(correlations[valid] / denominators[valid])
+        alignment = int(np.argmax(scores))
+        similarity = float(scores[alignment])
+
+        tap_count = min(32, max(1, microphone.size // 4))
+        half_taps = tap_count // 2
+        padded_reference = np.pad(reference, (half_taps, tap_count - half_taps))
+        source = padded_reference[
+            alignment : alignment + microphone.size + tap_count - 1
+        ]
+        design = np.lib.stride_tricks.sliding_window_view(source, tap_count)
+        gram = design.T @ design
+        ridge = max(float(np.trace(gram)) / tap_count * 1e-4, 1e-6)
+        coefficients = np.linalg.solve(
+            gram + np.eye(tap_count) * ridge, design.T @ microphone
+        )
+        residual = microphone - design @ coefficients
+        residual_rms = float(np.sqrt(np.mean(np.square(residual))))
+        return similarity, residual_rms
 
     def synthesise(
         self, text: str, cancel_event: threading.Event | None = None
