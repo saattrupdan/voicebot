@@ -275,29 +275,48 @@ class ShoppingTools:
     ) -> ToolResult:
         """Request confirmation, then remove one exact item."""
         typed_arguments = dict(arguments)
-        profile, account, failure = self._resolve_profile(context, typed_arguments)
-        if failure is not None:
-            return failure
-        assert profile is not None and account is not None
-        list_id, list_name, failure = self._resolve_list(
-            context=context,
-            account=account,
-            profile=profile,
-            spoken=arguments.get("list_name"),
+        confirmed_target = (
+            context.state.get("_confirmed_target")
+            if context.confirmation_resume
+            else None
         )
-        if failure is not None:
-            return failure
-        assert list_id is not None and list_name is not None
-        item_id, item_name, failure = self._resolve_item(
-            context=context,
-            account=account,
-            profile=profile,
-            list_id=list_id,
-            spoken=t.cast(str, arguments.get("item_name")),
-        )
-        if failure is not None:
-            return failure
-        assert item_id is not None and item_name is not None
+        if _valid_removal_target(confirmed_target):
+            profile = confirmed_target["profile_name"]
+            account = self.provider.accounts.get(profile)
+            if account is None:
+                return _result(
+                    context,
+                    ToolStatus.UNAUTHENTICATED,
+                    "Listonic er ikke forbundet for profilen.",
+                )
+            list_id = confirmed_target["list_id"]
+            list_name = confirmed_target["list_name"]
+            item_id = confirmed_target["item_id"]
+            item_name = confirmed_target["item_name"]
+        else:
+            profile, account, failure = self._resolve_profile(context, typed_arguments)
+            if failure is not None:
+                return failure
+            assert profile is not None and account is not None
+            list_id, list_name, failure = self._resolve_list(
+                context=context,
+                account=account,
+                profile=profile,
+                spoken=arguments.get("list_name"),
+            )
+            if failure is not None:
+                return failure
+            assert list_id is not None and list_name is not None
+            item_id, item_name, failure = self._resolve_item(
+                context=context,
+                account=account,
+                profile=profile,
+                list_id=list_id,
+                spoken=t.cast(str, arguments.get("item_name")),
+            )
+            if failure is not None:
+                return failure
+            assert item_id is not None and item_name is not None
         resolved: dict[str, object] = {
             "profile_name": self._profile_label(profile),
             "list_name": list_name,
@@ -308,6 +327,13 @@ class ShoppingTools:
             "profile_name": resolved["profile_name"],
             "list_name": resolved["list_name"],
             "item_name": resolved["item_name"],
+        }
+        context.state["_confirmation_target"] = {
+            "profile_name": profile,
+            "list_id": list_id,
+            "list_name": list_name,
+            "item_id": item_id,
+            "item_name": item_name,
         }
         if not self._confirmed(context=context, resolved=resolved):
             return ToolResult(
@@ -635,6 +661,15 @@ def _provider_failure(*, context: ToolContext, error: Exception) -> ToolResult:
         ToolStatus.UNAVAILABLE,
         "Listonic er midlertidigt utilgængelig.",
         retryable=True,
+    )
+
+
+def _valid_removal_target(value: object) -> t.TypeGuard[dict[str, str]]:
+    required = {"profile_name", "list_id", "list_name", "item_id", "item_name"}
+    return (
+        isinstance(value, dict)
+        and set(value) == required
+        and all(isinstance(item, str) and item for item in value.values())
     )
 
 

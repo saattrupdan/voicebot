@@ -11,7 +11,12 @@ import httpx
 import pytest
 
 from scripts.integrations import _PersistedAuthHandler
-from voicebot.auth import CredentialError, CredentialStore, MemoryCredentialBackend
+from voicebot.auth import (
+    ConnectionStatus,
+    CredentialError,
+    CredentialStore,
+    MemoryCredentialBackend,
+)
 from voicebot.auth.listonic import (
     LISTONIC_LOGIN_URL,
     IsolatedBrowserSession,
@@ -22,6 +27,7 @@ from voicebot.providers.listonic import (
     ListonicAuthenticationError,
     ListonicCircuitBreaker,
     ListonicContractDriftError,
+    ListonicError,
     ListonicProvider,
     ListonicSessionToken,
 )
@@ -290,9 +296,13 @@ def test_access_state_rehydrates_and_expires_without_opening_circuit() -> None:
         allow_unofficial=True,
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    with pytest.raises(ListonicAuthenticationError, match="re-onboarding"):
+    with pytest.raises(ListonicError, match="temporarily unavailable"):
         expired.list_lists(expired_account)
     assert not expired.circuit_open
+    assert (
+        expired_store.account_status(account.credential_ref)
+        is ConnectionStatus.CONNECTED
+    )
     assert expired_store.load_refresh_token(account.credential_ref) == "refresh-canary"
     assert (
         expired_store.load_provider_secret(account.credential_ref, "listonic_access")
@@ -379,7 +389,38 @@ def test_rejected_refresh_fails_permanently_before_body_parsing() -> None:
     )
     with pytest.raises(ListonicAuthenticationError, match="re-onboarding"):
         provider.list_lists(account)
-    assert store.account_status(account.credential_ref).value == "disconnected"
+    assert store.account_status(account.credential_ref) is ConnectionStatus.DISCONNECTED
+
+
+def test_transient_and_malformed_refreshes_preserve_connection_state() -> None:
+    """Disconnect only rejected credentials and trip drift only for bad contracts."""
+    for response, expected_error, breaker_open in (
+        (httpx.Response(503, text="unavailable"), ListonicError, False),
+        (
+            httpx.Response(200, json={"unexpected": "shape"}),
+            ListonicContractDriftError,
+            True,
+        ),
+    ):
+        store = CredentialStore.memory_only()
+        account = store.connect(
+            "listonic", "household", refresh_token="still-valid-refresh"
+        )
+        provider = ListonicProvider(
+            store,
+            accounts={"household": account},
+            enabled=True,
+            allow_unofficial=True,
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(lambda request, value=response: value)
+            ),
+        )
+        with pytest.raises(expected_error):
+            provider.list_lists(account)
+        assert (
+            store.account_status(account.credential_ref) is ConnectionStatus.CONNECTED
+        )
+        assert provider.circuit_open is breaker_open
 
 
 def test_listonic_login_status_and_disconnect_survive_reconstruction(
@@ -437,9 +478,7 @@ def test_listonic_login_status_and_disconnect_survive_reconstruction(
             }
         ),
     )
-    assert (
-        getattr(reconstructed.status("household"), "state") == "re-onboarding required"
-    )
+    assert getattr(reconstructed.status("household"), "state") == "connected"
     reconstructed.disconnect("household")
     assert getattr(reconstructed.status("household"), "state") == "disconnected"
     assert reconstructed_store.load_refresh_token(account.credential_ref) is None

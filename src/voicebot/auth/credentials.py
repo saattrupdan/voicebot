@@ -35,6 +35,10 @@ class PermanentRefreshError(CredentialError):
     """Raised by a provider when a refresh credential cannot be used again."""
 
 
+class RefreshContractError(CredentialError):
+    """Raised when a successful refresh response violates its pinned contract."""
+
+
 class ConnectionStatus(enum.StrEnum):
     """Local state of a provider account."""
 
@@ -372,6 +376,8 @@ class CredentialStore:
             except PermanentRefreshError:
                 self.mark_disconnected(credential_ref)
                 raise PermanentRefreshError("permanent token refresh failure") from None
+            except RefreshContractError:
+                raise RefreshContractError("token refresh contract changed") from None
             except Exception:
                 # Provider exceptions may echo request data.  Keep the public error
                 # deliberately generic rather than forwarding their text.
@@ -595,6 +601,7 @@ __all__ = [
     "ProviderAccount",
     "ProviderAuthHandler",
     "RefreshCallback",
+    "RefreshContractError",
     "RevocationCallback",
     "TokenSet",
     "new_credential_reference",

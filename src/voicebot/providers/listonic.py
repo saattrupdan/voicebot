@@ -25,6 +25,7 @@ from ..auth.credentials import (
     PermanentRefreshError,
     ProviderAccount,
     RefreshCallback,
+    RefreshContractError,
     TokenSet,
 )
 
@@ -441,21 +442,23 @@ class ListonicProvider:
             raise CredentialError("Listonic token refresh failed") from None
         if response.status_code in {400, 401, 403}:
             raise PermanentRefreshError("Listonic refresh credential was rejected")
-        if not 200 <= response.status_code < 300:
+        if response.status_code == 429 or response.status_code >= 500:
             raise CredentialError("Listonic token refresh failed")
+        if not 200 <= response.status_code < 300:
+            raise RefreshContractError("Listonic refresh endpoint changed")
         try:
             payload = response.json()
         except TypeError, ValueError:
-            raise CredentialError("Listonic token refresh failed") from None
+            raise RefreshContractError("Listonic refresh response changed") from None
         if not isinstance(payload, dict):
-            raise CredentialError("Listonic token refresh failed")
+            raise RefreshContractError("Listonic refresh response changed")
         access = payload.get("access_token")
         rotated_refresh = payload.get("refresh_token")
         if not isinstance(access, str) or not isinstance(rotated_refresh, str):
-            raise CredentialError("Listonic token refresh returned invalid data")
+            raise RefreshContractError("Listonic refresh response changed")
         expiry = _jwt_expiry(access)
         if expiry is None or expiry <= dt.datetime.now(dt.UTC):
-            raise CredentialError("Listonic token refresh returned invalid data")
+            raise RefreshContractError("Listonic refresh response changed")
         return TokenSet(
             access_token=access, expires_at=expiry, refresh_token=rotated_refresh
         )
@@ -485,7 +488,9 @@ class ListonicProvider:
             )
             expiry = _jwt_expiry(token)
             if expiry is None:
-                raise CredentialError("Listonic token refresh returned invalid data")
+                raise RefreshContractError(
+                    "Listonic token refresh returned invalid data"
+                )
             self.credential_store.store_provider_secret(
                 account.credential_ref,
                 "listonic_access",
@@ -497,11 +502,18 @@ class ListonicProvider:
             self._session_tokens[account.credential_ref] = ListonicSessionToken(
                 access_token=token, refresh_token="", expires_at=expiry
             )
-        except CredentialError, PermanentRefreshError:
+        except PermanentRefreshError:
             self.credential_store.mark_disconnected(account.credential_ref)
             raise ListonicAuthenticationError(
                 "Listonic refresh failed; re-onboarding is required"
             ) from None
+        except RefreshContractError:
+            self.breaker.trip()
+            raise ListonicContractDriftError(
+                "Listonic refresh response changed"
+            ) from None
+        except CredentialError:
+            raise ListonicError("Listonic refresh is temporarily unavailable") from None
         return token
 
     def _rehydrate_session_tokens(self, account: ProviderAccount) -> None:

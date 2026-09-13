@@ -131,15 +131,15 @@ class ListonicAuthHandler:
             state = "connected"
             if account is None:
                 state = "disconnected"
-            elif not _has_valid_access_state(
-                self.credential_store, account, now=self.clock()
-            ):
-                state = "re-onboarding required"
             elif (
                 self.credential_store.account_status(account.credential_ref)
                 is not ConnectionStatus.CONNECTED
             ):
                 state = "disconnected"
+            elif (
+                self.credential_store.load_refresh_token(account.credential_ref) is None
+            ):
+                state = "re-onboarding required"
             return ListonicAuthStatus(profile=profile, state=state)
         statuses: list[ListonicAuthStatus] = []
         for name in sorted(self._accounts):
@@ -181,28 +181,6 @@ def listonic_auth_handler(
 
 
 build_listonic_auth_handler = listonic_auth_handler
-
-
-def _has_valid_access_state(
-    credential_store: CredentialStore, account: ProviderAccount, *, now: dt.datetime
-) -> bool:
-    value = credential_store.load_provider_secret(
-        account.credential_ref, "listonic_access"
-    )
-    if value is None:
-        return False
-    try:
-        payload = json.loads(value)
-        access_token = payload["access_token"]
-        expires_at = dt.datetime.fromisoformat(payload["expires_at"])
-    except KeyError, TypeError, ValueError, json.JSONDecodeError:
-        return False
-    return (
-        isinstance(access_token, str)
-        and bool(access_token)
-        and expires_at.tzinfo is not None
-        and expires_at.astimezone(dt.UTC) > now.astimezone(dt.UTC)
-    )
 
 
 def _import_session_tokens(value: object, *, now: dt.datetime) -> ListonicSessionToken:

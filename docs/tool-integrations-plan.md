@@ -885,14 +885,16 @@ and both use the OS keyring credential backend:
 - Tool calls use their provider call ID as a stable idempotency key. A completed result
   is reused; an uncertain started operation is never replayed automatically.
 - Destructive Listonic removal and Spotify volume above 80 percent use a two-minute,
-  device-bound confirmation. The resolved arguments, origin device, and expiry are
-  persisted; changed, expired, or cross-device confirmations are rejected.
+  device-bound confirmation. Listonic confirmations persist the exact resolved list and
+  item IDs internally, preventing same-name changes from redirecting deletion; expired
+  or cross-device confirmations are rejected.
 - Reminder playback is acknowledged only after successful TTS or explicit dismissal;
   playback, network, and cancellation failures remain recoverable.
 - Listonic onboarding requires an operator-installed isolated browser helper. The helper
-  never receives a password from the bot and is destroyed after token import. Listonic
-  refresh has no verified contract and therefore fails closed rather than guessing an
-  endpoint.
+  never receives a password from the bot and is destroyed after token import. Headless
+  refresh uses the pinned public web-app contract; rejected credentials require
+  re-onboarding, transient failures preserve the connection, and malformed successful
+  responses open only the Listonic circuit breaker.
 
 - [x] `Europe/Copenhagen` is the default timezone.
 - [x] Cooking timers are non-persistent and limited to 24 hours.

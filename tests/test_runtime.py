@@ -172,6 +172,8 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
     listonic = t.cast(ListonicProvider, runtime.providers[2])
     spotify_mutations = 0
     listonic_mutations = 0
+    listonic_item_id = "item-1"
+    removed_paths: list[str] = []
 
     def spotify_handler(request: httpx.Request) -> httpx.Response:
         nonlocal spotify_mutations
@@ -193,9 +195,10 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
             return httpx.Response(200, json=[{"Id": "list-1", "Name": "Groceries"}])
         if request.method == "GET":
             return httpx.Response(
-                200, json=[{"id": "item-1", "name": "Milk", "checked": False}]
+                200, json=[{"id": listonic_item_id, "name": "Milk", "checked": False}]
             )
         listonic_mutations += 1
+        removed_paths.append(request.url.path)
         return httpx.Response(200)
 
     spotify.http_client.close()
@@ -303,9 +306,11 @@ def test_real_confirmations_are_device_bound_expiring_and_exactly_once(
             ToolContext(runtime.state, operation_id="remove-1", device_id="device-a"),
         )
         assert pending.status is ToolStatus.CONFIRMATION_REQUIRED
+        listonic_item_id = "item-2"
         removed = manager.resolve(True, device_id="device-a")
         assert removed.status is ToolStatus.OK
         assert listonic_mutations == 1
+        assert removed_paths == ["/api/lists/list-1/items/item-1"]
         assert removed.status is not ToolStatus.CONFIRMATION_REQUIRED
     finally:
         runtime.stop()

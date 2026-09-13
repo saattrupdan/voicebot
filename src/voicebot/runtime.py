@@ -82,6 +82,9 @@ class ConfirmationManager:
                 "device_name",
             }
         }
+        target = context.state.pop("_confirmation_target", None)
+        if action == "remove_shopping_item" and not _valid_confirmation_target(target):
+            return False
         operation_id = context.operation_id
         if (
             operation_id is not None
@@ -98,6 +101,7 @@ class ConfirmationManager:
                     for key, value in resolved.items()
                     if key != "provider_id"
                 },
+                "target": target,
                 "device_id": context.device_id,
             },
             expires_at=dt.datetime.now(dt.UTC) + self.expiry,
@@ -167,11 +171,15 @@ class ConfirmationManager:
                 status=ToolStatus.INVALID_REQUEST,
                 message_da="Bekræftelsen var ugyldig.",
             )
+        resume_state = dict(self.runtime.state)
+        target = pending.payload.get("target")
+        if _valid_confirmation_target(target):
+            resume_state["_confirmed_target"] = target
         return self.runtime.registry.invoke(
             pending.action,
             t.cast(dict[str, object], stored_arguments),
             ToolContext(
-                state=self.runtime.state,
+                state=resume_state,
                 operation_id=pending.operation_id,
                 device_id=t.cast(str, current_device),
                 confirmation_resume=True,
@@ -471,6 +479,15 @@ def build_integration_runtime(
     )
     _install_confirmation(result, shopping, spotify)
     return result
+
+
+def _valid_confirmation_target(value: object) -> t.TypeGuard[dict[str, str]]:
+    required = {"profile_name", "list_id", "list_name", "item_id", "item_name"}
+    return (
+        isinstance(value, dict)
+        and set(value) == required
+        and all(isinstance(item, str) and item for item in value.values())
+    )
 
 
 def _install_confirmation(
