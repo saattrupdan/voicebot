@@ -195,13 +195,18 @@ class TextEngine:
             return
         for operation in notices:
             if isinstance(operation, dict):
+                status = operation.get("status")
+                if status == ToolStatus.OUTCOME_UNKNOWN.value:
+                    prefix = (
+                        "Resultatet af denne handling er uklart; den kan være "
+                        "gennemført og må ikke gentages. "
+                    )
+                else:
+                    prefix = "Denne handling er allerede gennemført. "
                 self.conversation.append(
                     {
                         "role": "system",
-                        "content": (
-                            "Denne handling er allerede gennemført. "
-                            + json.dumps(operation, ensure_ascii=False)
-                        ),
+                        "content": prefix + json.dumps(operation, ensure_ascii=False),
                     }
                 )
 

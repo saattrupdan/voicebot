@@ -410,8 +410,8 @@ Tools return structured data to the text engine rather than speaking directly.
 ```yaml
 status:
     ok | needs_clarification | confirmation_required | not_found | conflict |
-    unauthenticated | forbidden | unavailable | rate_limited | cancelled |
-    invalid_request
+    unauthenticated | forbidden | unavailable | rate_limited | outcome_unknown |
+    cancelled | invalid_request
 operation_id: string | null
 message_da: string
 data: object | null
@@ -425,7 +425,8 @@ Rules:
 - `confirmation_required` creates a short-lived pending action bound to all resolved
   arguments and the originating device.
 - Mutations receive an idempotency key and are never automatically replayed after an
-  uncertain provider response.
+  uncertain provider response. An `outcome_unknown` result is shown to the next model
+  turn as non-repeatable, even when speech cancellation rolls back the current turn.
 - `unauthenticated` instructs the user to run local setup. It never speaks a token,
   login URL, provider identifier, or provider error body.
 - Provider exceptions and response bodies do not pass directly to the model.
@@ -512,8 +513,9 @@ retry count.
 Use the authenticated local `gws` CLI as the sole Calendar runtime prerequisite. The
 voicebot passes only bounded, read-only Calendar requests to `gws`; it does not create
 an OAuth application, perform provider-owned authorisation, store refresh tokens, or provide
-Calendar onboarding commands. Configure only the Calendar feature flag and local
-profile/calendar aliases.
+Calendar onboarding commands. Configure the Calendar feature flag, explicit
+`profile_bindings`, and local profile/calendar aliases. Profiles absent from those
+bindings, including stale aliases, fail closed without invoking `gws`.
 
 The same authenticated `gws` session also serves Gmail. Gmail is independently feature
 gated for the `dan` profile and exposes only bounded search/latest/read summaries and
@@ -691,6 +693,8 @@ profiles:
 integrations:
     google_calendar:
         enabled: false
+        default_profile: dan
+        profile_bindings: {}
         calendar_aliases: {}
     spotify:
         enabled: false

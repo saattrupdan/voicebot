@@ -194,6 +194,59 @@ def test_tool_uses_local_profile_without_oauth_account(tmp_path: pathlib.Path) -
     assert store.account("gws-local") is None
 
 
+def test_runtime_rejects_unbound_calendar_profiles_without_gws(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Calendar bindings and aliases do not follow unrelated voice profiles."""
+    monkeypatch.setattr(
+        "voicebot.providers.gws_calendar.shutil.which", lambda _: "/usr/bin/gws"
+    )
+
+    def unexpected_call(*_: object, **__: object) -> list[object]:
+        pytest.fail("unbound calendar profile invoked gws")
+
+    monkeypatch.setattr(GwsCalendarProvider, "list_events", unexpected_call)
+    from omegaconf import DictConfig, OmegaConf
+
+    config = t.cast(DictConfig, OmegaConf.load("config/config.yaml"))
+    config.storage.database_path = str(tmp_path / "state.sqlite")
+    config.storage.credential_backend = "memory"
+    config.profiles.eve = {"aliases": ["Eve"]}
+    config.profile_aliases = {"old eve": "eve"}
+    config.integrations.google_calendar.calendar_aliases.eve = {
+        "stale calendar": "stale-calendar"
+    }
+    runtime = build_integration_runtime(config)
+    try:
+        result = runtime.registry.invoke(
+            "list_calendar_events",
+            {
+                "profile_name": "Eve",
+                "calendar_name": "stale calendar",
+                "starts_at": START.isoformat(),
+                "ends_at": END.isoformat(),
+                "query": None,
+                "max_results": 1,
+            },
+        )
+        assert result.status is ToolStatus.NOT_FOUND
+
+        alias_result = runtime.registry.invoke(
+            "list_calendar_events",
+            {
+                "profile_name": "old eve",
+                "calendar_name": "stale calendar",
+                "starts_at": START.isoformat(),
+                "ends_at": END.isoformat(),
+                "query": None,
+                "max_results": 1,
+            },
+        )
+        assert alias_result.status is ToolStatus.NOT_FOUND
+    finally:
+        runtime.stop()
+
+
 def test_runtime_uses_gws_and_shipped_binding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:

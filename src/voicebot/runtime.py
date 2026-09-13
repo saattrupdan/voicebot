@@ -261,6 +261,19 @@ def build_integration_runtime(
         listonic_config.get("allow_unverified_item_removal", False)
     )
     calendar_config = _mapping(integrations.get("google_calendar", {}))
+    calendar_profiles = _calendar_profiles(calendar_config)
+    calendar_profile_aliases = {
+        alias: profile
+        for alias, profile in profile_aliases.items()
+        if profile in calendar_profiles
+    }
+    configured_calendar_default = calendar_config.get("default_profile")
+    calendar_default_profile = (
+        configured_calendar_default
+        if isinstance(configured_calendar_default, str)
+        and configured_calendar_default in calendar_profiles
+        else None
+    )
     gmail_config = _mapping(integrations.get("gmail", {}))
     gmail_profiles = _gmail_profiles(gmail_config)
     configured_gmail_default = gmail_config.get("default_profile")
@@ -279,7 +292,7 @@ def build_integration_runtime(
 
     calendar_provider = GwsCalendarProvider()
     gmail_provider = GwsGmailProvider()
-    calendar_accounts = {profile: "gws-local" for profile in profile_names}
+    calendar_accounts = {profile: "gws-local" for profile in calendar_profiles}
     spotify_client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_auth = (
         SpotifyAuthHandler(client_id=spotify_client_id, credential_store=credentials)
@@ -360,7 +373,7 @@ def build_integration_runtime(
     calendar = build_calendar_tools(
         calendar_provider,
         credentials,
-        profile_aliases=profile_aliases,
+        profile_aliases=calendar_profile_aliases,
         calendar_bindings=_calendar_bindings(
             storage,
             calendar_accounts,
@@ -369,7 +382,7 @@ def build_integration_runtime(
         profile_accounts={
             profile: account for profile, account in calendar_accounts.items()
         },
-        default_profile=default_profile,
+        default_profile=calendar_default_profile,
     )
     specs.extend(
         _gate_specs(
@@ -601,6 +614,16 @@ def _gmail_profiles(config: c.Mapping[str, object]) -> set[str]:
     }
 
 
+def _calendar_profiles(config: c.Mapping[str, object]) -> set[str]:
+    """Return profiles explicitly bound to the sole local Calendar account."""
+    bindings = _mapping(config.get("profile_bindings", {}))
+    return {
+        profile
+        for profile, provider in bindings.items()
+        if isinstance(profile, str) and provider == "gws-local"
+    }
+
+
 def _calendar_bindings(
     storage: Storage,
     accounts: c.Mapping[str, ProviderAccount | str],
@@ -611,8 +634,8 @@ def _calendar_bindings(
     values: list[CalendarBinding] = []
     for binding in storage.providers.find_bindings("calendar"):
         profile = profile_names.get(binding.profile_id)
-        if profile is not None:
-            account = accounts.get(profile)
+        if profile is not None and profile in accounts:
+            account = accounts[profile]
             values.append(
                 CalendarBinding(
                     profile,
@@ -624,20 +647,21 @@ def _calendar_bindings(
                 )
             )
     for profile, values_for_profile in (aliases or {}).items():
-        if isinstance(values_for_profile, c.Mapping):
-            for alias, calendar_id in values_for_profile.items():
-                if isinstance(alias, str) and isinstance(calendar_id, str):
-                    account = accounts.get(profile)
-                    values.append(
-                        CalendarBinding(
-                            profile,
-                            alias,
-                            calendar_id,
-                            account.credential_ref
-                            if isinstance(account, ProviderAccount)
-                            else None,
-                        )
+        if profile not in accounts or not isinstance(values_for_profile, c.Mapping):
+            continue
+        account = accounts[profile]
+        for alias, calendar_id in values_for_profile.items():
+            if isinstance(alias, str) and isinstance(calendar_id, str):
+                values.append(
+                    CalendarBinding(
+                        profile,
+                        alias,
+                        calendar_id,
+                        account.credential_ref
+                        if isinstance(account, ProviderAccount)
+                        else None,
                     )
+                )
     return values
 
 

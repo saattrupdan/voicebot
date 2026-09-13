@@ -53,8 +53,9 @@ provider state while retaining read-only tools.
 The shipped configuration uses the already-authenticated local Google Workspace CLI;
 it does not create a second OAuth client, persist a Calendar account, or handle tokens.
 Install `gws` and authenticate it once (for example with `gws auth login`). Calendar
-reads are limited to event listing and free/busy queries. The profile `dan` is bound to
-Google's `primary` calendar under the spoken alias `min kalender`.
+reads are limited to event listing and free/busy queries. Only profiles listed under
+`integrations.google_calendar.profile_bindings` are eligible; the shipped profile `dan`
+is bound to Google's `primary` calendar under the spoken alias `min kalender`.
 
 An authenticated `gws` installation is the sole Calendar and Gmail prerequisite. Gmail
 is explicitly bound only to the `dan` profile under
