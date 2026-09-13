@@ -65,6 +65,7 @@ class VoiceBot:
             model=self.cfg.tts_model_id,
             voice=self.cfg.tts_voice,
             sample_rate=int(self.cfg.get("tts_sample_rate", 24_000)),
+            echo_stream_delay_ms=int(self.cfg.get("barge_in_echo_delay_ms", 80)),
         )
 
         logger.info("Configuring local integrations...")

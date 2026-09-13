@@ -41,23 +41,44 @@ def test_synthesiser_streams_plapre_pcm(monkeypatch: pytest.MonkeyPatch) -> None
     output.close.assert_called_once_with()
 
 
-def test_playback_echo_assessment_preserves_unrelated_speech(
+def test_webrtc_echo_cancellation_preserves_double_talk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Echo removal handles gain, delay, filtering, and mixed user speech."""
-    rng = np.random.default_rng(42)
-    playback = rng.integers(-8_000, 8_001, size=2_048, dtype=np.int16)
-    filtered = np.convolve(
-        playback.astype(np.float64), np.array([0.6, 0.3, 0.1]), mode="same"
-    )
-    echo = (filtered[256:1_792] / 4).astype(np.int16)
-    unrelated = rng.integers(-8_000, 8_001, size=echo.size, dtype=np.int16)
-    mixed_speech = np.clip(
-        echo.astype(np.int32) + unrelated.astype(np.int32), -32_768, 32_767
-    ).astype(np.int16)
+    """WebRTC AEC suppresses delayed playback while retaining user speech."""
+    output_sample_rate = 24_000
+    capture_sample_rate = 16_000
+    output_chunk_size = 1_920
+    capture_chunk_size = 1_280
+    chunk_count = 24
+    output_time = np.arange(output_chunk_size * chunk_count) / output_sample_rate
+    capture_time = np.arange(capture_chunk_size * chunk_count) / capture_sample_rate
+
+    def speech_signal(time: np.ndarray) -> np.ndarray:
+        return (
+            3_000 * np.sin(2 * np.pi * 180 * time)
+            + 1_800 * np.sin(2 * np.pi * 530 * time)
+            + 900 * np.sin(2 * np.pi * 1_100 * time)
+        ) * (0.5 + 0.5 * np.square(np.sin(2 * np.pi * 3 * time)))
+
+    playback_float = speech_signal(output_time)
+    far_end = speech_signal(capture_time)
+    playback = np.clip(playback_float, -32_768, 32_767).astype(np.int16)
+    filtered = np.convolve(far_end, np.array([0.5, 0.3, 0.15, 0.05]), mode="same")
+    near_end = np.zeros_like(far_end)
+    near_end[capture_chunk_size:] = filtered[:-capture_chunk_size] * 0.5
+    user_mask = (capture_time >= 1.04) & (capture_time < 1.36)
+    near_end[user_mask] += 5_000 * np.sin(
+        2 * np.pi * 240 * capture_time[user_mask]
+    ) + 2_500 * np.sin(2 * np.pi * 700 * capture_time[user_mask])
+    capture = np.clip(near_end, -32_768, 32_767).astype(np.int16)
+    playback_chunks = np.split(playback, chunk_count)
+    capture_chunks = np.split(capture, chunk_count)
+
     client = MagicMock()
     response = MagicMock()
-    response.iter_bytes.return_value = iter([playback.tobytes()])
+    response.iter_bytes.return_value = iter(
+        [chunk.tobytes() for chunk in playback_chunks]
+    )
     context = MagicMock()
     context.__enter__.return_value = response
     client.audio.speech.with_streaming_response.create.return_value = context
@@ -66,36 +87,63 @@ def test_playback_echo_assessment_preserves_unrelated_speech(
         speech_synthesis.sounddevice, "RawOutputStream", MagicMock(return_value=output)
     )
     synthesiser = speech_synthesis.SpeechSynthesiser(
-        client=client, model="syvai/plapre-nano", voice="tor"
+        client=client,
+        model="syvai/plapre-nano",
+        voice="tor",
+        sample_rate=output_sample_rate,
+        echo_stream_delay_ms=80,
     )
-    assessments: list[tuple[float, float]] = []
+    residual_levels: list[float] = []
+    readiness: list[bool] = []
 
-    def inspect_reference(_: bytes) -> None:
-        assessments.extend(
-            [
-                synthesiser.playback_echo_assessment(audio=echo, sample_rate=24_000),
-                synthesiser.playback_echo_assessment(
-                    audio=unrelated, sample_rate=24_000
-                ),
-                synthesiser.playback_echo_assessment(
-                    audio=mixed_speech, sample_rate=24_000
-                ),
-            ]
+    def process_capture(_: bytes) -> None:
+        capture_chunk = capture_chunks[len(residual_levels)]
+        residual_rms, ready = synthesiser.playback_non_echo_rms(
+            audio=capture_chunk, sample_rate=capture_sample_rate
         )
+        residual_levels.append(residual_rms)
+        readiness.append(ready)
 
-    output.write.side_effect = inspect_reference
+    output.write.side_effect = process_capture
 
     assert synthesiser.synthesise(text="Hej.") is PlaybackOutcome.COMPLETE
-    assert assessments[0][0] > 0.8
-    assert assessments[0][1] < 10.0
-    assert assessments[1][0] < 0.1
-    assert assessments[1][1] > 4_000.0
-    assert assessments[2][1] > 4_000.0
-    similarity, residual_rms = synthesiser.playback_echo_assessment(
-        audio=playback, sample_rate=24_000
+    assert readiness[:3] == [False, True, True]
+    assert max(residual_levels[7:12]) < 100.0
+    assert min(residual_levels[13:16]) > 500.0
+    assert max(residual_levels[18:23]) < 300.0
+
+
+def test_echo_canceller_readiness_resets_after_queue_discontinuity() -> None:
+    """Underflow and overflow require two newly aligned chunks before use."""
+    synthesiser = speech_synthesis.SpeechSynthesiser(
+        client=MagicMock(), model="syvai/plapre-nano", voice="tor", sample_rate=16_000
     )
-    assert similarity == 0.0
-    assert residual_rms > 4_000.0
+    chunk = np.arange(1_280, dtype=np.int16)
+
+    synthesiser._queue_playback_reference(
+        audio=chunk.tobytes(), sample_rate=16_000, channels=1
+    )
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is False
+    synthesiser._queue_playback_reference(
+        audio=chunk.tobytes(), sample_rate=16_000, channels=1
+    )
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is True
+
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is False
+    synthesiser._queue_playback_reference(
+        audio=chunk.tobytes(), sample_rate=16_000, channels=1
+    )
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is False
+    synthesiser._queue_playback_reference(
+        audio=chunk.tobytes(), sample_rate=16_000, channels=1
+    )
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is True
+
+    oversized = np.tile(chunk, 13)
+    synthesiser._queue_playback_reference(
+        audio=oversized.tobytes(), sample_rate=16_000, channels=1
+    )
+    assert synthesiser.playback_non_echo_rms(chunk, 16_000)[1] is False
 
 
 def test_synthesiser_stops_streamed_playback(monkeypatch: pytest.MonkeyPatch) -> None:

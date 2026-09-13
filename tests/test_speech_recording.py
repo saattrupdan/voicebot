@@ -142,7 +142,7 @@ def _config(**overrides: object) -> DictConfig:
         "max_seconds_audio": 2.0,
         "follow_up_max_seconds": 5.0,
         "barge_in_confirmation_seconds": 0.16,
-        "barge_in_speech_start_snr": 2.5,
+        "barge_in_speech_start_snr": 2.0,
         "play_back_audio": False,
         "wake_word_probability_threshold": 0.5,
         "wake_word_responses": ["Ja?"],
@@ -508,7 +508,7 @@ def test_barge_in_stops_playback_and_records_continued_speech(
     wake_word = MagicMock()
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_assessment.return_value = (0.8, 2_000.0)
+    synthesiser.playback_non_echo_rms.return_value = (2_000.0, True)
     interrupted = MagicMock()
 
     audio, started = speech_recording.record_speech(
@@ -546,7 +546,7 @@ def test_playback_leakage_does_not_trigger_barge_in(
     monkeypatch.setattr(speech_recording, "record", _recorder(frames))
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_assessment.return_value = (0.9, 100.0)
+    synthesiser.playback_non_echo_rms.return_value = (100.0, True)
     interrupted = MagicMock()
     wake_word = MagicMock()
 
@@ -567,6 +567,38 @@ def test_playback_leakage_does_not_trigger_barge_in(
     wake_word.predict.assert_not_called()
 
 
+def test_unready_echo_canceller_cannot_trigger_barge_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Playback onset is ignored until aligned AEC output is available."""
+    detector = _detector(onset_frames=2, max_silence_frames=4)
+    frames = [_chunk(2_000), _chunk(2_000), _chunk(0), np.empty(0, dtype=np.int16)]
+    monkeypatch.setattr(speech_recording, "record", _recorder(frames))
+    synthesiser = MagicMock()
+    synthesiser.is_playing = True
+    synthesiser.playback_non_echo_rms.side_effect = [
+        (2_000.0, False),
+        (100.0, True),
+        (0.0, True),
+    ]
+    interrupted = MagicMock()
+
+    audio, started = speech_recording.record_speech(
+        last_response_time=speech_recording.dt.datetime(1900, 1, 1),
+        detector=detector,
+        wake_word_model=MagicMock(),
+        synthesiser=synthesiser,
+        cfg=_config(),
+        force_follow_up=True,
+        on_interrupt=interrupted,
+    )
+
+    assert started is None
+    assert audio.size == 0
+    synthesiser.stop.assert_not_called()
+    interrupted.assert_not_called()
+
+
 def test_brief_speech_does_not_trigger_barge_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -576,7 +608,7 @@ def test_brief_speech_does_not_trigger_barge_in(
     monkeypatch.setattr(speech_recording, "record", _recorder(frames))
     synthesiser = MagicMock()
     synthesiser.is_playing = True
-    synthesiser.playback_echo_assessment.return_value = (0.1, 2_000.0)
+    synthesiser.playback_non_echo_rms.return_value = (2_000.0, True)
     interrupted = MagicMock()
     wake_word = MagicMock()
 

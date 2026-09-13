@@ -408,7 +408,7 @@ def record_speech(
         1,
         math.ceil(float(cfg.get("barge_in_confirmation_seconds", 0.16)) * SAMPLE_RATE),
     )
-    barge_in_speech_start_snr = float(cfg.get("barge_in_speech_start_snr", 2.5))
+    barge_in_speech_start_snr = float(cfg.get("barge_in_speech_start_snr", 2.0))
     interrupt_notified = False
 
     logger.info(
@@ -443,17 +443,18 @@ def record_speech(
                     barge_in_threshold = (
                         detector.noise_floor * barge_in_speech_start_snr
                     )
-                    _, non_echo_rms = (
-                        synthesiser.playback_echo_assessment(
+                    non_echo_rms, echo_canceller_ready = (
+                        synthesiser.playback_non_echo_rms(
                             audio=frame, sample_rate=SAMPLE_RATE
                         )
                         if playback_active
-                        else (0.0, frame_rms)
+                        else (frame_rms, True)
                     )
 
                     if barge_in_candidate:
                         if (
-                            activity.speech_detected
+                            echo_canceller_ready
+                            and activity.speech_detected
                             and non_echo_rms >= barge_in_threshold
                         ):
                             barge_in_frames.append(frame)
@@ -506,7 +507,10 @@ def record_speech(
                         )
                         if follow_up or armed_after_wake:
                             if playback_active:
-                                if non_echo_rms < barge_in_threshold:
+                                if (
+                                    not echo_canceller_ready
+                                    or non_echo_rms < barge_in_threshold
+                                ):
                                     detector.reset_activity()
                                     pre_roll.clear()
                                     continue

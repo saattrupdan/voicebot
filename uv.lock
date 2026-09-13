@@ -1561,6 +1561,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pywebrtc-audio"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d8/b0/8d9e93083ac412cc758003d5e216d44f69b50619cdd0cfc7897e576eb90c/pywebrtc_audio-0.2.0.tar.gz", hash = "sha256:cdc47c063439b033bdd6110d2e1119fd6e36c6e007ed824bc369c9a5e3cb307a", size = 1748548, upload-time = "2026-09-03T19:03:15.662Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/f0/b88b5e386754e5ad8e9282f9e8208528db0f70c111bf52fd4c245464918e/pywebrtc_audio-0.2.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:bb5cbdd15e053545b8785a014179922cabd3a5e94e1d6891e8a2ba81783770bf", size = 404079, upload-time = "2026-09-03T19:03:05.742Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/c1/9674ed4d5790eed71599bac650c01f6c3c76cf1134c2992a3d83b4e72b48/pywebrtc_audio-0.2.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:15918b67be57c7308aefa5e155d4e4d46f79fa1c16f41e9a07a46f41ffcac054", size = 368433, upload-time = "2026-09-03T19:03:06.997Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/30/e939d3802eee047b0e70ca2a143d1741f11e34a5d391f74c20aff1d1d68f/pywebrtc_audio-0.2.0-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e16e7ac90f60e1a62e45cb8d13a5534419691c8471fa301f353323384c95d856", size = 401046, upload-time = "2026-09-03T19:03:08.62Z" },
+    { url = "https://files.pythonhosted.org/packages/46/b6/a9746137596b726c793de61abaf70b8886a28e242a2a51c7e3159e52edb8/pywebrtc_audio-0.2.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:de507feb3755ade41da4556aafdfa39106e3697d23a801ecc41d1deb0ebed537", size = 442692, upload-time = "2026-09-03T19:03:09.907Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/40/7f499fd418b6368705063f16d579eb3370eaae88834a2e8ffb3c670fa5d6/pywebrtc_audio-0.2.0-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:4b91505a1e2e26f692cdd2f938a2f0c998685a6f691afb7e7cc968787f1a594f", size = 1396389, upload-time = "2026-09-03T19:03:11.144Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/f5/069e6bd051192fca6dc5d3d16c8e7490c360a86fa51db1e7d7f459b3df62/pywebrtc_audio-0.2.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:2e2307aff5c2b59c421dcd34694efe35448fef2d568b00eebb02685dfc2e648a", size = 1485130, upload-time = "2026-09-03T19:03:12.818Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/87/2cf3596685090f5c5ef440d0cf3214e4b62b2f46f39f07d3bd313266d06d/pywebrtc_audio-0.2.0-cp314-cp314-win_amd64.whl", hash = "sha256:2af958f61e8a1a71bb030ed481d55aeba24ff24d500c3023b6bdc7e4dc7c5d3a", size = 530851, upload-time = "2026-09-03T19:03:14.249Z" },
+]
+
+[[package]]
 name = "pywin32"
 version = "312"
 source = { registry = "https://pypi.org/simple" }
@@ -2051,6 +2069,7 @@ dependencies = [
     { name = "pvrecorder" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "pywebrtc-audio" },
     { name = "requests" },
     { name = "requests-cache" },
     { name = "retry-requests" },
@@ -2088,6 +2107,7 @@ requires-dist = [
     { name = "pvrecorder", specifier = ">=1.2.7" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
+    { name = "pywebrtc-audio", specifier = ">=0.2.0" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "requests-cache", specifier = ">=1.3.3" },
     { name = "retry-requests", specifier = ">=2.0.0" },

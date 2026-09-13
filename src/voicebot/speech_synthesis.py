@@ -10,12 +10,16 @@ from pathlib import Path
 import numpy as np
 import openai
 import sounddevice
+from pywebrtc_audio import EchoCanceller
 
 logger = logging.getLogger(__name__)
 
 PCM_SAMPLE_RATE = 24_000
 PCM_CHANNELS = 1
-PCM_CHUNK_BYTES = 4096
+PCM_CHUNK_BYTES = 3_840
+ECHO_SAMPLE_RATE = 16_000
+ECHO_READY_CHUNKS = 2
+ECHO_MAX_BUFFER_SECONDS = 1
 
 
 class PlaybackOutcome(enum.StrEnum):
@@ -35,6 +39,7 @@ class SpeechSynthesiser:
         model: str,
         voice: str,
         sample_rate: int = PCM_SAMPLE_RATE,
+        echo_stream_delay_ms: int = 80,
     ) -> None:
         """Initialise the speech synthesiser.
 
@@ -47,6 +52,8 @@ class SpeechSynthesiser:
                 Voice identifier supported by the model.
             sample_rate (optional):
                 PCM output sample rate. Defaults to 24 kHz, Plapre's native rate.
+            echo_stream_delay_ms (optional):
+                Estimated render-to-capture delay for WebRTC AEC. Defaults to 80 ms.
         """
         self.client = client
         self.model = model
@@ -54,10 +61,17 @@ class SpeechSynthesiser:
         self.sample_rate = sample_rate
         self._state_lock = threading.Lock()
         self._serial_lock = threading.Lock()
+        self._echo_lock = threading.Lock()
         self._active_cancel: threading.Event | None = None
         self._active_response: object | None = None
         self._active_output: object | None = None
-        self._playback_reference = np.empty(0, dtype=np.float64)
+        self._far_end_buffer = np.empty(0, dtype=np.int16)
+        self._echo_ready_chunks = 0
+        self._echo_canceller = EchoCanceller(
+            sample_rate=ECHO_SAMPLE_RATE,
+            num_channels=PCM_CHANNELS,
+            stream_delay_ms=echo_stream_delay_ms,
+        )
         self._playing = threading.Event()
 
     @property
@@ -65,10 +79,10 @@ class SpeechSynthesiser:
         """Return whether synthesised audio is currently playing."""
         return self._playing.is_set()
 
-    def playback_echo_assessment(
+    def playback_non_echo_rms(
         self, audio: np.ndarray, sample_rate: int
-    ) -> tuple[float, float]:
-        """Measure playback similarity and unexplained microphone energy.
+    ) -> tuple[float, bool]:
+        """Remove queued playback and return remaining RMS plus readiness.
 
         Args:
             audio:
@@ -77,61 +91,40 @@ class SpeechSynthesiser:
                 Sample rate of the microphone audio.
 
         Returns:
-            Strongest playback correlation and residual RMS after subtracting a
-            short fitted echo path. The residual retains unrelated user speech.
+            RMS of capture audio which the echo canceller did not attribute to the
+            bot's playback, and whether two aligned chunks have been processed.
         """
-        microphone = self._resample(
+        near_end = self._resample(
             samples=audio.astype(np.float64),
             source_rate=sample_rate,
-            target_rate=self.sample_rate,
+            target_rate=ECHO_SAMPLE_RATE,
         )
-        microphone -= float(np.mean(microphone)) if microphone.size else 0.0
-        microphone_rms = (
-            float(np.sqrt(np.mean(np.square(microphone)))) if microphone.size else 0.0
+        near_end = np.clip(near_end, -32_768, 32_767).astype(np.int16)
+        with self._echo_lock:
+            if self._far_end_buffer.size < near_end.size:
+                self._reset_echo_canceller()
+                near_end_float = near_end.astype(np.float64)
+                rms = (
+                    float(np.sqrt(np.mean(np.square(near_end_float))))
+                    if near_end_float.size
+                    else 0.0
+                )
+                return rms, False
+
+            far_end = self._far_end_buffer[: near_end.size]
+            self._far_end_buffer = self._far_end_buffer[near_end.size :]
+            cleaned = np.asarray(
+                self._echo_canceller.process(near_end, far_end), dtype=np.int16
+            )
+            self._echo_ready_chunks += 1
+            ready = self._echo_ready_chunks >= ECHO_READY_CHUNKS
+        cleaned_float = cleaned.astype(np.float64)
+        rms = (
+            float(np.sqrt(np.mean(np.square(cleaned_float))))
+            if cleaned_float.size
+            else 0.0
         )
-        with self._state_lock:
-            reference = self._playback_reference.copy()
-        if microphone.size < 4 or reference.size < microphone.size:
-            return 0.0, microphone_rms
-
-        microphone_energy = float(np.sum(np.square(microphone)))
-        if microphone_energy <= 0.0:
-            return 0.0, 0.0
-
-        window_size = microphone.size
-        cumulative = np.concatenate(([0.0], np.cumsum(reference)))
-        cumulative_squares = np.concatenate(([0.0], np.cumsum(np.square(reference))))
-        window_sums = cumulative[window_size:] - cumulative[:-window_size]
-        window_square_sums = (
-            cumulative_squares[window_size:] - cumulative_squares[:-window_size]
-        )
-        window_energies = window_square_sums - np.square(window_sums) / window_size
-        correlations = np.correlate(reference, microphone, mode="valid")
-        denominators = np.sqrt(np.maximum(window_energies, 0.0) * microphone_energy)
-        valid = denominators > 0.0
-        if not np.any(valid):
-            return 0.0, microphone_rms
-
-        scores = np.zeros_like(correlations)
-        scores[valid] = np.abs(correlations[valid] / denominators[valid])
-        alignment = int(np.argmax(scores))
-        similarity = float(scores[alignment])
-
-        tap_count = min(32, max(1, microphone.size // 4))
-        half_taps = tap_count // 2
-        padded_reference = np.pad(reference, (half_taps, tap_count - half_taps))
-        source = padded_reference[
-            alignment : alignment + microphone.size + tap_count - 1
-        ]
-        design = np.lib.stride_tricks.sliding_window_view(source, tap_count)
-        gram = design.T @ design
-        ridge = max(float(np.trace(gram)) / tap_count * 1e-4, 1e-6)
-        coefficients = np.linalg.solve(
-            gram + np.eye(tap_count) * ridge, design.T @ microphone
-        )
-        residual = microphone - design @ coefficients
-        residual_rms = float(np.sqrt(np.mean(np.square(residual))))
-        return similarity, residual_rms
+        return rms, ready
 
     def synthesise(
         self, text: str, cancel_event: threading.Event | None = None
@@ -149,6 +142,8 @@ class SpeechSynthesiser:
 
         local_cancel = threading.Event()
         with self._serial_lock:
+            with self._echo_lock:
+                self._reset_echo_canceller()
             with self._state_lock:
                 self._active_cancel = local_cancel
             try:
@@ -169,7 +164,6 @@ class SpeechSynthesiser:
                     self._active_cancel = None
                     self._active_response = None
                     self._active_output = None
-                    self._playback_reference = np.empty(0, dtype=np.float64)
 
     def stop(self) -> None:
         """Stop active generation and playback as soon as possible."""
@@ -214,7 +208,7 @@ class SpeechSynthesiser:
                         remainder = audio[complete_bytes:]
                         if complete_bytes:
                             output_audio = audio[:complete_bytes]
-                            self._update_playback_reference(
+                            self._queue_playback_reference(
                                 audio=output_audio,
                                 sample_rate=self.sample_rate,
                                 channels=PCM_CHANNELS,
@@ -281,7 +275,7 @@ class SpeechSynthesiser:
                     audio = wav_file.readframes(PCM_CHUNK_BYTES // 2)
                     if not audio:
                         break
-                    self._update_playback_reference(
+                    self._queue_playback_reference(
                         audio=audio,
                         sample_rate=wav_file.getframerate(),
                         channels=wav_file.getnchannels(),
@@ -301,22 +295,34 @@ class SpeechSynthesiser:
             return PlaybackOutcome.CANCELLED
         return PlaybackOutcome.COMPLETE
 
-    def _update_playback_reference(
+    def _queue_playback_reference(
         self, audio: bytes, sample_rate: int, channels: int
     ) -> None:
-        """Retain recent output samples for gain-invariant echo matching."""
+        """Queue chronological far-end audio for WebRTC echo cancellation."""
         samples = np.frombuffer(audio, dtype=np.int16).astype(np.float64)
         if channels > 1:
             complete_samples = samples.size - samples.size % channels
             samples = samples[:complete_samples].reshape(-1, channels).mean(axis=1)
         samples = self._resample(
-            samples=samples, source_rate=sample_rate, target_rate=self.sample_rate
+            samples=samples, source_rate=sample_rate, target_rate=ECHO_SAMPLE_RATE
         )
-        max_samples = int(self.sample_rate * 1.5)
-        with self._state_lock:
-            self._playback_reference = np.concatenate(
-                (self._playback_reference, samples)
-            )[-max_samples:]
+        reference = np.clip(samples, -32_768, 32_767).astype(np.int16)
+        max_samples = ECHO_SAMPLE_RATE * ECHO_MAX_BUFFER_SECONDS
+        reference_was_truncated = reference.size > max_samples
+        reference = reference[-max_samples:]
+        with self._echo_lock:
+            if (
+                reference_was_truncated
+                or self._far_end_buffer.size + reference.size > max_samples
+            ):
+                self._reset_echo_canceller()
+            self._far_end_buffer = np.concatenate((self._far_end_buffer, reference))
+
+    def _reset_echo_canceller(self) -> None:
+        """Reset AEC state and queued render audio after a discontinuity."""
+        self._echo_canceller.reset()
+        self._far_end_buffer = np.empty(0, dtype=np.int16)
+        self._echo_ready_chunks = 0
 
     @staticmethod
     def _resample(
