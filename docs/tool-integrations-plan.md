@@ -515,8 +515,10 @@ an OAuth application, perform provider-owned authorisation, store refresh tokens
 Calendar onboarding commands. Configure only the Calendar feature flag and local
 profile/calendar aliases.
 
-The same authenticated `gws` session may later serve Gmail, but email tools are outside
-this task and must not be added as part of Calendar access.
+The same authenticated `gws` session also serves Gmail. Gmail is independently feature
+gated for the `dan` profile and exposes only bounded search/latest/read summaries and
+unsent draft creation. It has no send route; opaque message handles are process-local,
+device-scoped, expiring, and capped, and attachment content is never downloaded.
 
 ### Spotify authentication
 

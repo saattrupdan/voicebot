@@ -119,6 +119,7 @@ class ToolSpec:
     parameters: dict[str, object]
     handler: ToolHandler
     mutates: bool = False
+    persist_arguments: bool = True
 
     def as_openai_tool(self) -> dict[str, object]:
         """Return this definition in Chat Completions format."""
@@ -295,7 +296,7 @@ class ToolRuntime:
                 key,
                 name,
                 profile_id=profile_id if isinstance(profile_id, str) else None,
-                request=typed_arguments,
+                request=typed_arguments if spec.persist_arguments else {},
                 operation_id=operation_id,
             )
             operation = acquisition.operation

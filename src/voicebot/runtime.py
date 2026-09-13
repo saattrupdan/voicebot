@@ -22,6 +22,7 @@ from .auth import (
 from .auth.spotify import SpotifyAuthHandler
 from .notifications import NotificationCallback, NotificationDispatcher
 from .providers.gws_calendar import GwsCalendarProvider
+from .providers.gws_gmail import GwsGmailProvider
 from .providers.listonic import ListonicProvider
 from .providers.spotify import SpotifyProvider
 from .scheduler import ReminderScheduler
@@ -33,6 +34,7 @@ from .tools.calendar import (
     build_calendar_tools,
     make_calendar_tool_specs,
 )
+from .tools.gmail import GmailToolAdapter, make_gmail_tool_specs
 from .tools.reminders import (
     cancel_reminder_spec,
     create_reminder_spec,
@@ -250,6 +252,7 @@ def build_integration_runtime(
     integrations = _mapping(_value(cfg, "integrations", {}))
 
     calendar_enabled = _enabled(integrations, "google_calendar")
+    gmail_enabled = _enabled(integrations, "gmail")
     spotify_enabled = _enabled(integrations, "spotify")
     listonic_config = _mapping(integrations.get("listonic", {}))
     listonic_enabled = bool(listonic_config.get("enabled", False))
@@ -266,6 +269,7 @@ def build_integration_runtime(
     )
 
     calendar_provider = GwsCalendarProvider()
+    gmail_provider = GwsGmailProvider()
     calendar_accounts = {profile: "gws-local" for profile in profile_names}
     spotify_client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_auth = (
@@ -365,6 +369,17 @@ def build_integration_runtime(
             "Kalenderen er ikke aktiveret.",
         )
     )
+    gmail = GmailToolAdapter(
+        gmail_provider,
+        profiles=profile_names,
+        profile_aliases=profile_aliases,
+        default_profile=default_profile,
+    )
+    specs.extend(
+        _gate_specs(
+            make_gmail_tool_specs(gmail), gmail_enabled, "Gmail er ikke aktiveret."
+        )
+    )
     specs.extend(
         _gate_specs(
             build_spotify_tools(spotify), spotify_enabled, "Spotify er ikke aktiveret."
@@ -425,7 +440,7 @@ def build_integration_runtime(
         scheduler=scheduler,
         dispatcher=dispatcher,
         state=state,
-        providers=(calendar_provider, spotify, listonic),
+        providers=(calendar_provider, spotify, listonic, gmail_provider),
         _stop_event=threading.Event(),
     )
     _install_confirmation(result, shopping, spotify)
@@ -723,6 +738,7 @@ def _gate_specs(
                 spec.parameters,
                 handler,
                 mutates=spec.mutates,
+                persist_arguments=spec.persist_arguments,
             )
         )
     return result
