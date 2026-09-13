@@ -364,7 +364,6 @@ storage:
 integrations:
   google_calendar:
     enabled: true
-    backend: gws
     calendar_aliases:
       dan:
         min kalender: primary

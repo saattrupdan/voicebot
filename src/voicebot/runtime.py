@@ -19,10 +19,8 @@ from .auth import (
     MemoryCredentialBackend,
     ProviderAccount,
 )
-from .auth.google import GoogleCalendarAuthHandler
 from .auth.spotify import SpotifyAuthHandler
 from .notifications import NotificationCallback, NotificationDispatcher
-from .providers.google_calendar import GoogleCalendarProvider
 from .providers.gws_calendar import GwsCalendarProvider
 from .providers.listonic import ListonicProvider
 from .providers.spotify import SpotifyProvider
@@ -243,7 +241,7 @@ def build_integration_runtime(
     """Build storage, providers, strict tool handlers, and worker services.
 
     All values read from configuration are routing metadata or feature flags. Provider
-    hosts, OAuth scopes, and credentials remain constants or environment/keyring data.
+    hosts and credentials remain constants or environment/keyring data.
     """
     storage = _build_storage(cfg)
     credentials = _build_credentials(cfg, storage)
@@ -251,7 +249,7 @@ def build_integration_runtime(
     accounts = _load_accounts(storage, credentials)
     integrations = _mapping(_value(cfg, "integrations", {}))
 
-    google_enabled = _enabled(integrations, "google_calendar")
+    calendar_enabled = _enabled(integrations, "google_calendar")
     spotify_enabled = _enabled(integrations, "spotify")
     listonic_config = _mapping(integrations.get("listonic", {}))
     listonic_enabled = bool(listonic_config.get("enabled", False))
@@ -259,7 +257,7 @@ def build_integration_runtime(
     listonic_removal_allowed = bool(
         listonic_config.get("allow_unverified_item_removal", False)
     )
-    google_config = _mapping(integrations.get("google_calendar", {}))
+    calendar_config = _mapping(integrations.get("google_calendar", {}))
     spotify_config = _mapping(integrations.get("spotify", {}))
     list_aliases = _merge_aliases(
         t.cast(dict[str, object], _list_aliases(storage)),
@@ -267,25 +265,8 @@ def build_integration_runtime(
         _mapping(_value(cfg, "shopping_list_aliases", {})),
     )
 
-    google_backend = str(google_config.get("backend", "oauth")).casefold()
-    if google_backend == "gws":
-        google = GwsCalendarProvider()
-        google_accounts = {profile: "gws-local" for profile in profile_names}
-    else:
-        google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "disabled-client")
-        google_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
-        google_auth = GoogleCalendarAuthHandler(
-            credential_store=credentials,
-            client_id=google_client_id,
-            client_secret=google_client_secret,
-        )
-        google = GoogleCalendarProvider(
-            credential_store=credentials,
-            client_id=google_client_id,
-            client_secret=google_client_secret,
-            auth_handler=google_auth,
-        )
-        google_accounts = accounts.get("google_calendar", {})
+    calendar_provider = GwsCalendarProvider()
+    calendar_accounts = {profile: "gws-local" for profile in profile_names}
     spotify_client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_auth = (
         SpotifyAuthHandler(client_id=spotify_client_id, credential_store=credentials)
@@ -364,23 +345,23 @@ def build_integration_runtime(
         cancel_reminder_spec(storage),
     ]
     calendar = build_calendar_tools(
-        google,
+        calendar_provider,
         credentials,
         profile_aliases=profile_aliases,
         calendar_bindings=_calendar_bindings(
             storage,
-            google_accounts,
-            aliases=_mapping(google_config.get("calendar_aliases", {})),
+            calendar_accounts,
+            aliases=_mapping(calendar_config.get("calendar_aliases", {})),
         ),
         profile_accounts={
-            profile: account for profile, account in google_accounts.items()
+            profile: account for profile, account in calendar_accounts.items()
         },
         default_profile=default_profile,
     )
     specs.extend(
         _gate_specs(
             make_calendar_tool_specs(calendar),
-            google_enabled,
+            calendar_enabled,
             "Kalenderen er ikke aktiveret.",
         )
     )
@@ -444,7 +425,7 @@ def build_integration_runtime(
         scheduler=scheduler,
         dispatcher=dispatcher,
         state=state,
-        providers=(google, spotify, listonic),
+        providers=(calendar_provider, spotify, listonic),
         _stop_event=threading.Event(),
     )
     _install_confirmation(result, shopping, spotify)

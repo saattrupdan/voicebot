@@ -471,7 +471,6 @@ changed request creates a new pending action.
 Authentication never happens through speech. A local setup command performs onboarding:
 
 ```text
-voicebot integrations login google-calendar --profile dan
 voicebot integrations login spotify --profile household
 voicebot integrations login listonic --profile household
 voicebot integrations status
@@ -508,31 +507,16 @@ Logs must redact:
 Logs may contain the local operation ID, provider name, status class, duration, and
 retry count.
 
-### Google Calendar authentication
+### Google Calendar access
 
-Use OAuth 2.0 Authorization Code with PKCE, a loopback redirect, CSRF `state`, and
-offline access. A normal browser performs consent.
+Use the authenticated local `gws` CLI as the sole Calendar runtime prerequisite. The
+voicebot passes only bounded, read-only Calendar requests to `gws`; it does not create
+an OAuth application, perform provider-owned authorisation, store refresh tokens, or provide
+Calendar onboarding commands. Configure only the Calendar feature flag and local
+profile/calendar aliases.
 
-Request only:
-
-```text
-openid
-https://www.googleapis.com/auth/calendar.calendarlist.readonly
-https://www.googleapis.com/auth/calendar.events.readonly
-```
-
-No write scope is requested or implemented. The adapter must be structurally unable to
-send calendar write requests.
-
-Two account models are possible:
-
-1. One household Google account with selected calendars shared read-only into it.
-2. One OAuth connection per person.
-
-The household-account model is simpler. Per-person OAuth offers stronger separation.
-Both still use local person and calendar aliases.
-
-Disconnect calls Google's revocation endpoint and erases local credentials.
+The same authenticated `gws` session may later serve Gmail, but email tools are outside
+this task and must not be added as part of Calendar access.
 
 ### Spotify authentication
 
@@ -735,11 +719,11 @@ host.
 src/voicebot/
   auth/
     credentials.py
-    google.py
     listonic.py
     spotify.py
   providers/
-    google_calendar.py
+    calendar_domain.py
+    gws_calendar.py
     listonic.py
     spotify.py
   storage/
@@ -789,9 +773,10 @@ confirmations, cancellation, idempotency, and redaction.
 
 ### Phase 4: Read-only Google Calendar
 
-- Add local OAuth onboarding and credential storage.
+- Require an authenticated local `gws` CLI session; do not add Calendar OAuth
+  onboarding or Google client configuration.
 - Add profile and calendar aliases.
-- Implement event listing and free/busy queries only.
+- Implement event listing and free/busy queries only through `gws`.
 - Enforce field filtering and private-event behaviour.
 - Roll out first in text-only or shadow mode before spoken results.
 
@@ -825,7 +810,7 @@ confirmations, cancellation, idempotency, and redaction.
 - Table-test aliases, ambiguity, defaults, and confirmation policy.
 - Inject clocks for relative time, daylight-saving transitions, and clock jumps.
 - Use temporary SQLite databases for migrations, leases, crashes, and recovery.
-- Mock OAuth and provider HTTP servers.
+- Mock Spotify OAuth and provider HTTP servers.
 - Pin sanitized Listonic request verbs, paths, field casing, and expected statuses.
 - Verify Spotify search-to-result binding and current-device resolution.
 - Verify calendar field filtering and profile separation.
@@ -907,7 +892,8 @@ and both use the OS keyring credential backend:
       reporting is not implemented.
 - [x] One default profile is used per physical voicebot installation.
 - [x] Other people's calendars require an explicit profile name.
-- [x] Each profile may have its own least-privilege Google account.
+- [x] Calendar uses the authenticated local `gws` session; no Google account is
+      onboarded by the voicebot.
 - [x] Private calendar events are reduced to busy intervals.
 - [x] Calendar locations are not exposed by the tool contract.
 - [x] Spotify uses the configured profile and exact device aliases.
@@ -927,7 +913,8 @@ and both use the OS keyring credential backend:
 - Every model-visible tool has a strict schema and deterministic result contract.
 - No credential or provider identifier is visible to the model.
 - No credential, private event, or shopping-list payload appears in logs.
-- Calendar access is technically read-only and uses least-privilege scopes.
+- Calendar access is technically read-only and uses the authenticated local `gws`
+  session.
 - Provider accounts and aliases cannot leak across profiles.
 - Reminder delivery survives restart and has documented missed-delivery behaviour.
 - Barge-in cannot duplicate provider mutations.

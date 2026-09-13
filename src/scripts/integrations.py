@@ -1,8 +1,8 @@
 """Safe local onboarding entry point for provider integrations.
 
-The commands route OAuth and isolated-browser onboarding through provider handlers.
-Providers without local OAuth client configuration remain harmlessly unavailable rather
-than prompting for or accepting credentials on the command line.
+The commands route Spotify OAuth and isolated-browser Listonic onboarding through
+provider handlers. Google Calendar uses the separately authenticated local ``gws``
+CLI and has no onboarding command here.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from voicebot.auth import (
     ProviderAuthHandler,
     redact_text,
 )
-from voicebot.auth.google import GoogleCalendarAuthHandler
 from voicebot.auth.listonic import (
     IsolatedBrowserFactory,
     IsolatedBrowserSession,
@@ -37,7 +36,7 @@ from voicebot.auth.listonic import (
 from voicebot.auth.spotify import SpotifyAuthHandler
 from voicebot.storage import Storage
 
-DEFAULT_PROVIDERS = ("google-calendar", "spotify", "listonic")
+DEFAULT_PROVIDERS = ("spotify", "listonic")
 
 
 class BrowserHelperUnavailable(CredentialError):
@@ -399,34 +398,16 @@ def register_integration_handlers(
     *,
     credential_store: CredentialStore | None = None,
     storage: Storage | None = None,
-    google_client_id: str | None = None,
-    google_client_secret: str | None = None,
     spotify_client_id: str | None = None,
     listonic_browser_factory: IsolatedBrowserFactory | None = None,
 ) -> ProviderRegistry:
-    """Register the three local onboarding implementations.
+    """Register Spotify and Listonic onboarding implementations.
 
-    Client IDs are read from the environment by default. Missing IDs leave OAuth
-    providers safely unconfigured rather than prompting for a secret on stdin.
+    The Calendar runtime uses the separately authenticated local ``gws`` CLI, so it
+    deliberately has no onboarding handler or client configuration here.
     """
     active = registry or _default_registry
     store = credential_store or CredentialStore()
-    google_id = google_client_id or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
-    if google_id:
-        active.register(
-            "google-calendar",
-            _persisted_handler(
-                "google_calendar",
-                GoogleCalendarAuthHandler(
-                    credential_store=store,
-                    client_id=google_id,
-                    client_secret=google_client_secret
-                    or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
-                ),
-                storage=storage,
-                credentials=store,
-            ),
-        )
     spotify_id = spotify_client_id or os.environ.get("SPOTIFY_CLIENT_ID")
     if spotify_id:
         active.register(

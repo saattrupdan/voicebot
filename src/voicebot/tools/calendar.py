@@ -7,7 +7,7 @@ import dataclasses
 import datetime as dt
 
 from ..auth.credentials import CredentialStore, ProviderAccount
-from ..providers.google_calendar import (
+from ..providers.calendar_domain import (
     BusyInterval,
     CalendarProvider,
     GoogleCalendarError,

@@ -56,27 +56,22 @@ Install `gws` and authenticate it once (for example with `gws auth login`). Cale
 reads are limited to event listing and free/busy queries. The profile `dan` is bound to
 Google's `primary` calendar under the spoken alias `min kalender`.
 
-`uv run src/scripts/integrations.py status` reports OAuth account metadata only; it does
-not log in or disconnect the `gws` session. If `gws` is missing, unauthenticated,
-times out, or returns invalid JSON, Calendar tools fail closed with their normal
-unavailable or not-connected status. Keep `integrations.google_calendar.backend: oauth`
-when using the existing local OAuth provider instead.
+An authenticated `gws` installation is the sole Calendar prerequisite. The same local
+Workspace authentication may later support Gmail, but this task adds no email tools.
+The setup CLI does not log in to or disconnect the `gws` session. If `gws` is missing,
+unauthenticated, times out, or returns invalid JSON, Calendar tools fail closed with
+their normal unavailable or not-connected status.
 
-### OAuth providers
+### Spotify OAuth setup
 
-Create local OAuth applications and set their client values in the environment before
-running setup. OAuth remains an explicit alternative to the `gws` backend:
+Set the Spotify client ID before running Spotify setup:
 
 ```sh
-export GOOGLE_OAUTH_CLIENT_ID=your-google-client-id
-export GOOGLE_OAUTH_CLIENT_SECRET=your-google-client-secret  # optional PKCE secret
 export SPOTIFY_CLIENT_ID=your-spotify-client-id
 ```
 
-Register the loopback callback shown by the onboarding flow with each provider. Google
-requests read-only Calendar scopes. Spotify playback control requires a Spotify Premium
-account and an account with playback permission; inactive or ambiguous devices are
-reported instead of guessed.
+Spotify playback control requires a Spotify Premium account and an account with
+playback permission; inactive or ambiguous devices are reported instead of guessed.
 
 ### Listonic warning
 
