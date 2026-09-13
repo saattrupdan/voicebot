@@ -395,6 +395,7 @@ def test_rejected_refresh_fails_permanently_before_body_parsing() -> None:
 def test_transient_and_malformed_refreshes_preserve_connection_state() -> None:
     """Disconnect only rejected credentials and trip drift only for bad contracts."""
     for response, expected_error, breaker_open in (
+        (httpx.Response(408, text="request timeout"), ListonicError, False),
         (httpx.Response(503, text="unavailable"), ListonicError, False),
         (
             httpx.Response(200, json={"unexpected": "shape"}),

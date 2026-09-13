@@ -442,7 +442,7 @@ class ListonicProvider:
             raise CredentialError("Listonic token refresh failed") from None
         if response.status_code in {400, 401, 403}:
             raise PermanentRefreshError("Listonic refresh credential was rejected")
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code in {408, 429} or response.status_code >= 500:
             raise CredentialError("Listonic token refresh failed")
         if not 200 <= response.status_code < 300:
             raise RefreshContractError("Listonic refresh endpoint changed")
