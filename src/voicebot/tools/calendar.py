@@ -9,9 +9,9 @@ import datetime as dt
 from ..auth.credentials import CredentialStore, ProviderAccount
 from ..providers.google_calendar import (
     BusyInterval,
+    CalendarProvider,
     GoogleCalendarError,
     GoogleCalendarForbidden,
-    GoogleCalendarProvider,
     GoogleCalendarRateLimited,
     GoogleCalendarUnauthenticated,
     GoogleCalendarUnavailable,
@@ -49,7 +49,7 @@ class CalendarToolAdapter:
 
     def __init__(
         self,
-        provider: GoogleCalendarProvider,
+        provider: CalendarProvider,
         credential_store: CredentialStore,
         *,
         profile_aliases: c.Mapping[str, str] | c.Iterable[tuple[str, str]] = (),
@@ -362,7 +362,7 @@ GoogleCalendarTools = CalendarToolAdapter
 
 
 def build_calendar_tools(
-    provider: GoogleCalendarProvider,
+    provider: CalendarProvider,
     credential_store: CredentialStore,
     *,
     profile_aliases: c.Mapping[str, str] | c.Iterable[tuple[str, str]] = (),

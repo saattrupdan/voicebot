@@ -9,7 +9,8 @@ integrations.
 2. Add `SYV_API_KEY` and `MELIOUS_API_KEY` to `.env` when prompted.
 3. Run `make bot`.
 
-The default configuration keeps Google Calendar, Spotify, and Listonic disabled. Named
+The default configuration enables Google Calendar through the local `gws` CLI and
+keeps Spotify and Listonic disabled. Named
 timers are local to the process; reminders are stored in
 `.local/state/voicebot.sqlite` and are delivered by the scheduler embedded in the bot.
 The scheduler uses a SQLite lease, so a restart recovers due notifications. Delivery is
@@ -47,10 +48,24 @@ Provider IDs in these mappings are never accepted as model arguments or spoken b
 Set `mutations_enabled: false` to centrally disable every tool that changes local or
 provider state while retaining read-only tools.
 
+### Google Calendar through `gws`
+
+The shipped configuration uses the already-authenticated local Google Workspace CLI;
+it does not create a second OAuth client, persist a Calendar account, or handle tokens.
+Install `gws` and authenticate it once (for example with `gws auth login`). Calendar
+reads are limited to event listing and free/busy queries. The profile `dan` is bound to
+Google's `primary` calendar under the spoken alias `min kalender`.
+
+`uv run src/scripts/integrations.py status` reports OAuth account metadata only; it does
+not log in or disconnect the `gws` session. If `gws` is missing, unauthenticated,
+times out, or returns invalid JSON, Calendar tools fail closed with their normal
+unavailable or not-connected status. Keep `integrations.google_calendar.backend: oauth`
+when using the existing local OAuth provider instead.
+
 ### OAuth providers
 
 Create local OAuth applications and set their client values in the environment before
-running setup:
+running setup. OAuth remains an explicit alternative to the `gws` backend:
 
 ```sh
 export GOOGLE_OAUTH_CLIENT_ID=your-google-client-id

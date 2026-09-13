@@ -23,6 +23,7 @@ from .auth.google import GoogleCalendarAuthHandler
 from .auth.spotify import SpotifyAuthHandler
 from .notifications import NotificationCallback, NotificationDispatcher
 from .providers.google_calendar import GoogleCalendarProvider
+from .providers.gws_calendar import GwsCalendarProvider
 from .providers.listonic import ListonicProvider
 from .providers.spotify import SpotifyProvider
 from .scheduler import ReminderScheduler
@@ -246,7 +247,7 @@ def build_integration_runtime(
     """
     storage = _build_storage(cfg)
     credentials = _build_credentials(cfg, storage)
-    _, profile_aliases, default_profile = _ensure_profiles(cfg, storage)
+    profile_names, profile_aliases, default_profile = _ensure_profiles(cfg, storage)
     accounts = _load_accounts(storage, credentials)
     integrations = _mapping(_value(cfg, "integrations", {}))
 
@@ -266,19 +267,25 @@ def build_integration_runtime(
         _mapping(_value(cfg, "shopping_list_aliases", {})),
     )
 
-    google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "disabled-client")
-    google_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
-    google_auth = GoogleCalendarAuthHandler(
-        credential_store=credentials,
-        client_id=google_client_id,
-        client_secret=google_client_secret,
-    )
-    google = GoogleCalendarProvider(
-        credential_store=credentials,
-        client_id=google_client_id,
-        client_secret=google_client_secret,
-        auth_handler=google_auth,
-    )
+    google_backend = str(google_config.get("backend", "oauth")).casefold()
+    if google_backend == "gws":
+        google = GwsCalendarProvider()
+        google_accounts = {profile: "gws-local" for profile in profile_names}
+    else:
+        google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "disabled-client")
+        google_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        google_auth = GoogleCalendarAuthHandler(
+            credential_store=credentials,
+            client_id=google_client_id,
+            client_secret=google_client_secret,
+        )
+        google = GoogleCalendarProvider(
+            credential_store=credentials,
+            client_id=google_client_id,
+            client_secret=google_client_secret,
+            auth_handler=google_auth,
+        )
+        google_accounts = accounts.get("google_calendar", {})
     spotify_client_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_auth = (
         SpotifyAuthHandler(client_id=spotify_client_id, credential_store=credentials)
@@ -362,12 +369,11 @@ def build_integration_runtime(
         profile_aliases=profile_aliases,
         calendar_bindings=_calendar_bindings(
             storage,
-            accounts.get("google_calendar", {}),
+            google_accounts,
             aliases=_mapping(google_config.get("calendar_aliases", {})),
         ),
         profile_accounts={
-            profile: account
-            for profile, account in accounts.get("google_calendar", {}).items()
+            profile: account for profile, account in google_accounts.items()
         },
         default_profile=default_profile,
     )
@@ -578,7 +584,7 @@ def _load_accounts(
 
 def _calendar_bindings(
     storage: Storage,
-    accounts: dict[str, ProviderAccount],
+    accounts: c.Mapping[str, ProviderAccount | str],
     *,
     aliases: dict[str, object] | None = None,
 ) -> list[CalendarBinding]:
@@ -593,7 +599,9 @@ def _calendar_bindings(
                     profile,
                     binding.alias,
                     binding.provider_id,
-                    account.credential_ref if account else None,
+                    account.credential_ref
+                    if isinstance(account, ProviderAccount)
+                    else None,
                 )
             )
     for profile, values_for_profile in (aliases or {}).items():
@@ -606,7 +614,9 @@ def _calendar_bindings(
                             profile,
                             alias,
                             calendar_id,
-                            account.credential_ref if account else None,
+                            account.credential_ref
+                            if isinstance(account, ProviderAccount)
+                            else None,
                         )
                     )
     return values
